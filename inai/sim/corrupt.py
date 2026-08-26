@@ -54,6 +54,8 @@ class RecordOperator(Protocol):
 class BatchOperator(Protocol):
     id: str
     tier_contribution: MatchTier
+    #: False where the operator does not make the INVOICE harder to match.
+    escalates_tier: bool
 
     def apply_batch(self, batch: Batch, rate: float, rng: np.random.Generator) -> None: ...
 
@@ -98,6 +100,8 @@ class C01_StripReference:
     tier_contribution = MatchTier.T2_FUZZY
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
+        if chain.channel == "direct":
+            return chain.bank_ref is not None
         return any(leg.order_receipt is not None for leg in chain.legs)
 
     def apply(self, chain: LedgerChain, batch: Batch, rng: np.random.Generator) -> None:
@@ -106,6 +110,15 @@ class C01_StripReference:
         # invoice reference has neither. Clearing only one leaves a perfect join key in
         # place, so the operator claims to make matching hard while changing nothing —
         # which showed up as T4 scoring 95% against a "<50% expected" target.
+        if chain.channel == "direct":
+            # For a direct transfer the reference lives in the narration, not on a leg.
+            credit = batch.credit_by_id(chain.bank_ref or "")
+            if credit is not None:
+                stripped = credit.narration.replace(chain.invoice.invoice_id, "")
+                batch.replace_credit(
+                    chain.bank_ref or "", narration=" ".join(stripped.split()).rstrip("-/")
+                )
+            return
         for leg in list(chain.legs):
             _swap_leg(chain, batch, leg, dc_replace_leg(leg, order_receipt=None, order_id=None))
 
@@ -275,6 +288,11 @@ class C08_ParentCompanyPayer:
     """Customers pay with their parent company's bank account.
 
     Wrong-payer identity. Expect to lose most of these, and report the loss.
+
+    DIRECT PAYMENTS ONLY. A gateway settlement is always remitted by Razorpay, so "paid
+    from the parent company's account" is not a thing that can happen to one — applying it
+    there rewrote a remitter nobody matches on and left the reference chain intact, which
+    is how the adversarial tier ended up scoring 89% against a "<50% expected" target.
     """
 
     id = "C08"
@@ -290,16 +308,21 @@ class C08_ParentCompanyPayer:
     )
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
-        return chain.bank_ref is not None
+        return chain.channel == "direct" and chain.bank_ref is not None
 
     def apply(self, chain: LedgerChain, batch: Batch, rng: np.random.Generator) -> None:
         credit = batch.credit_by_id(chain.bank_ref or "")
         if credit is None:
             return
         parent = self._PARENTS[int(rng.integers(0, len(self._PARENTS)))]
+        # Replace the payer wholesale: the money is real, the sender is a company the
+        # ledger has never heard of, and the invoice reference goes with it.
+        narration = credit.narration
+        own = chain.invoice.customer_name
+        narration = narration.replace(own, parent).replace(chain.invoice.invoice_id, "")
         batch.replace_credit(
             chain.bank_ref or "",
-            narration=credit.narration.replace("RAZORPAY SOFTWARE PVT LTD", parent),
+            narration=" ".join(narration.split()).rstrip("-/"),
             counterparty_guess=parent,
         )
 
@@ -312,6 +335,11 @@ class C10_UnexplainedDeduction:
 
     No leg explains it, so the residual is genuinely unattributable — which is exactly the
     case where an honest exception beats a confident guess.
+
+    DIRECT PAYMENTS ONLY. This is a CUSTOMER deducting from what they owe — a disputed
+    freight charge, a quality claim, a TDS withholding nobody told AR about. The gateway
+    equivalent is a short settlement (C05/short_settlement), which is a different finding
+    with a different counterparty to chase.
     """
 
     id = "C10"
@@ -319,10 +347,12 @@ class C10_UnexplainedDeduction:
     tier_contribution = MatchTier.T4_ADVERSARIAL
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
-        return chain.bank_ref is not None and int(chain.gross_paise) > 10_000
+        return chain.channel == "direct" and int(chain.invoice.amount_paise) > 10_000
 
     def apply(self, chain: LedgerChain, batch: Batch, rng: np.random.Generator) -> None:
-        cut = int(int(chain.gross_paise) * float(rng.uniform(0.01, 0.08)))
+        # Deliberately larger than the ±₹1 amount tolerance, so the deduction defeats an
+        # amount match rather than merely bruising it.
+        cut = int(int(chain.invoice.amount_paise) * float(rng.uniform(0.02, 0.09)))
         _shift_credit(batch, chain, -cut)
 
 
@@ -444,15 +474,23 @@ class C02_BundleInvoices:
 
     A customer with several open invoices pays one lump covering all of them. This is the
     subset-sum case, and it cannot be expressed per-record: it needs several chains at once.
+
+    DIRECT PAYMENTS ONLY. Bundling means the CUSTOMER chose to pay several invoices with
+    one transfer. A Razorpay settlement cannot absorb a customer's own bank transfer, and
+    letting it do so produced direct-channel invoices whose "bank line" was a gateway
+    settlement remitted by Razorpay — a credit that could not exist.
     """
 
     id = "C02"
+    escalates_tier = True
     once_per_credit = False
     tier_contribution = MatchTier.T3_STRUCTURAL
 
     def apply_batch(self, batch: Batch, rate: float, rng: np.random.Generator) -> None:
         by_customer: dict[str, list[LedgerChain]] = {}
         for c in batch.chains:
+            if c.channel != "direct":
+                continue
             by_customer.setdefault(c.invoice.customer_id, []).append(c)
 
         for chains in by_customer.values():
@@ -490,6 +528,10 @@ class C09_DuplicateCredit:
 
     id = "C09"
     once_per_credit = False
+    #: The original credit is untouched, so the invoice matches exactly as it did before.
+    #: The duplicate is a standalone finding (DUPLICATE_PAYMENT), not a matching difficulty
+    #: — counting it as one filled the adversarial tier with easy records.
+    escalates_tier = False
     tier_contribution = MatchTier.T4_ADVERSARIAL
 
     def apply_batch(self, batch: Batch, rate: float, rng: np.random.Generator) -> None:
@@ -513,7 +555,7 @@ class C09_DuplicateCredit:
                     }
                 )
             )
-            chain.with_operator(self.id, self.tier_contribution)
+            chain.with_operator(self.id, self.tier_contribution, escalates=False)
 
 
 # ---------------------------------------------------------------------------

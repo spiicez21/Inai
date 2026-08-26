@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Literal
 
 from inai.money import Paise
 from inai.schema import BankCredit, Invoice, MatchTier, SettlementLeg
@@ -46,6 +47,11 @@ class LedgerChain:
     invoice: Invoice
     legs: list[SettlementLeg]
     settlement_id: str | None
+    #: "gateway" — settles as part of a lumped Razorpay credit, remitter is always Razorpay.
+    #: "direct"  — the customer transferred to the merchant's bank themselves, so the
+    #:             remitter is the CUSTOMER and there is no settlement leg at all.
+    #: Only direct payments can carry a wrong-payer or customer-side deduction failure.
+    channel: Literal["gateway", "direct"] = "gateway"
     #: Populated after settlements are assembled — a chain's credit is shared with every
     #: other chain in the same settlement, which is the whole point.
     bank_ref: str | None = None
@@ -56,10 +62,19 @@ class LedgerChain:
     #: Tier is the HARDEST tier among the operators that fired. Recomputed by `with_operator`.
     difficulty_tier: MatchTier = MatchTier.T0_EXACT
 
-    def with_operator(self, op_id: str, tier: MatchTier) -> None:
-        """Record that an operator fired, and escalate the difficulty tier if needed."""
+    def with_operator(self, op_id: str, tier: MatchTier, *, escalates: bool = True) -> None:
+        """Record that an operator fired, and escalate the difficulty tier if needed.
+
+        `escalates=False` records the operator WITHOUT moving the tier. Used where the
+        damage does not make this invoice harder to match — a duplicated credit leaves the
+        original perfectly matchable, and the finding is the extra bank line, not the
+        invoice. Escalating there would inflate the adversarial tier with easy records and
+        flatter the very number we promised to report honestly.
+        """
         if op_id not in self.operators_fired:
             self.operators_fired = (*self.operators_fired, op_id)
+        if not escalates:
+            return
         order = list(MatchTier)
         if order.index(tier) > order.index(self.difficulty_tier):
             self.difficulty_tier = tier

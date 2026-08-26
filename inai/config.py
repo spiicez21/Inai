@@ -85,6 +85,12 @@ class RunConfig(BaseModel):
     #: reconciling a quarter of trading is the scenario; two years in one batch is not,
     #: and it would stop settlements from lumping (DATA.md §1.3).
     window_days: int = Field(default=90, gt=0)
+    #: Share of invoices paid DIRECTLY into the merchant's bank rather than through the
+    #: gateway. A real merchant has both: card/UPI checkouts settle as lumped gateway
+    #: credits, while B2B customers pay by NEFT/IMPS from their own account. Without this
+    #: channel every credit is remitted by Razorpay, so "paid from a parent company's
+    #: account" (C08) cannot happen and the adversarial tier is not adversarial.
+    direct_payment_share: float = Field(default=0.18, ge=0.0, le=1.0)
     #: Oversampling factor for repeat customers. Olist is consumer e-commerce; INAI targets
     #: merchants with recurring and B2B receivables. Deliberate deviation — see sim/spine.py.
     repeat_boost: float = Field(default=6.0, ge=1.0)

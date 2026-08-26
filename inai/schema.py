@@ -36,6 +36,12 @@ class InvoiceStatus(StrEnum):
 class Invoice(Frozen):
     invoice_id: str
     customer_id: str
+    #: The payer's registered name, as the merchant's customer master holds it.
+    #:
+    #: On the ledger deliberately, so the matcher can compare it against a bank narration
+    #: without re-deriving it. A matcher that reconstructs the name the generator used
+    #: would be reading the answer key through a side channel.
+    customer_name: str = ""
     issued_at: datetime
     due_at: datetime
     amount_paise: Paise

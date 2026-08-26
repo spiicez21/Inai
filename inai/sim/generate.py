@@ -30,7 +30,12 @@ from inai.schema import (
 )
 from inai.sim.chain import Batch, LedgerChain, Settlement
 from inai.sim.localize import AmountScaler, localize_method
-from inai.sim.narration import make_utr, settlement_narration
+from inai.sim.narration import (
+    direct_narration,
+    make_utr,
+    payer_name,
+    settlement_narration,
+)
 from inai.sim.spine import SpineOrder, load_spine
 from inai.sim.truth import LATENT_STATE_PRIOR, LatentState
 
@@ -67,7 +72,7 @@ def generate(cfg: ResolvedConfig, rng: np.random.Generator) -> Batch:
         sigma=float(cfg.run.amount_sigma),
     )
 
-    rng_amount, rng_method, rng_time, rng_state, rng_utr = rng.spawn(5)
+    rng_amount, rng_method, rng_time, rng_state, rng_utr, rng_channel = rng.spawn(6)
 
     # Compress the spine's two-year span into one operating window.
     #
@@ -84,6 +89,15 @@ def generate(cfg: ResolvedConfig, rng: np.random.Generator) -> Batch:
 
     chains: list[LedgerChain] = []
     settlements: dict[str, Settlement] = {}
+
+    # The channel is a property of the CUSTOMER, not of the individual invoice.
+    #
+    # A B2B customer who pays by NEFT pays by NEFT every time; a consumer checking out on
+    # the website goes through the gateway every time. Drawing per-invoice instead scattered
+    # both channels through one customer's history, which is not how anyone pays — and it
+    # made C02 (a customer settling several open invoices with one transfer) almost
+    # impossible, because it needs two DIRECT invoices from the same payer.
+    channel_of: dict[str, bool] = {}
 
     gst_pct = float(cfg.constant("tax.gst_on_mdr_pct"))
     cycle_min = int(cfg.constant("settlement.cycle_days_min"))
@@ -105,11 +119,16 @@ def generate(cfg: ResolvedConfig, rng: np.random.Generator) -> Batch:
             rng_time=rng_time,
             rng_state=rng_state,
             rng_utr=rng_utr,
+            direct=channel_of.setdefault(
+                order.customer_id,
+                bool(rng_channel.random() < float(cfg.run.direct_payment_share)),
+            ),
         )
         if chain is not None:
             chains.append(chain)
 
     credits = _settle(settlements, chains, rng_utr)
+    credits += _direct_credits(chains, rng_utr)
     return Batch(chains=chains, settlements=settlements, credits=credits)
 
 
@@ -129,6 +148,7 @@ def _build_chain(
     rng_time: np.random.Generator,
     rng_state: np.random.Generator,
     rng_utr: np.random.Generator,
+    direct: bool = False,
 ) -> LedgerChain | None:
     issued_at = clock.map(order.purchase_at)
     due_at = issued_at + timedelta(days=int(rng_time.integers(7, 45)))
@@ -140,6 +160,7 @@ def _build_chain(
     invoice = Invoice(
         invoice_id=f"inv_{idx:07d}",
         customer_id=f"cus_{order.customer_id[:12]}",
+        customer_name=payer_name(order.customer_id),
         issued_at=issued_at,
         due_at=due_at,
         amount_paise=total,
@@ -148,6 +169,18 @@ def _build_chain(
         # Drives MSME appointed day: 45 days vs 15. Most B2B has paper; some does not.
         has_written_agreement=bool(rng_state.random() < 0.78),
     )
+
+    if direct:
+        # No gateway, so no legs, no MDR, no GST — the customer's bank moves the full
+        # amount into the merchant's account and the reconciliation is ledger × bank only.
+        # A two-way match is not a lesser case: it is most of B2B receivables.
+        return LedgerChain(
+            invoice=invoice,
+            legs=[],
+            settlement_id=None,
+            channel="direct",
+            latent_state=_draw_latent(rng_state),
+        )
 
     # Settlement cycle T+1…T+7, one cycle per (value_date), shared across many orders —
     # this is what makes the credit "lumped" rather than one-credit-per-order.
@@ -204,16 +237,53 @@ def _build_chain(
     if not legs:
         return None
 
-    states = list(LATENT_STATE_PRIOR)
-    weights = np.array([LATENT_STATE_PRIOR[s] for s in states])
-    latent: LatentState = states[int(rng_state.choice(len(states), p=weights / weights.sum()))]
-
     return LedgerChain(
         invoice=invoice,
         legs=legs,
         settlement_id=settlement_id,
-        latent_state=latent,
+        channel="gateway",
+        latent_state=_draw_latent(rng_state),
     )
+
+
+def _draw_latent(rng: np.random.Generator) -> LatentState:
+    states = list(LATENT_STATE_PRIOR)
+    weights = np.array([LATENT_STATE_PRIOR[s] for s in states])
+    return states[int(rng.choice(len(states), p=weights / weights.sum()))]
+
+
+def _direct_credits(chains: list[LedgerChain], rng: np.random.Generator) -> list[BankCredit]:
+    """One bank line per direct payment.
+
+    Deliberately NOT lumped: a customer's own transfer arrives as its own statement line,
+    which is exactly why direct payments are the tractable half of the problem — right up
+    until the reference is missing or the money comes from the wrong account.
+    """
+    out: list[BankCredit] = []
+    for i, chain in enumerate(chains):
+        if chain.channel != "direct":
+            continue
+        value_date = (chain.invoice.due_at - timedelta(days=int(rng.integers(0, 6)))).date()
+        narration, _ref = direct_narration(
+            rng,
+            customer_name=chain.invoice.customer_name,
+            invoice_id=chain.invoice.invoice_id,
+            amount_paise=int(chain.invoice.amount_paise),
+            value_date=value_date,
+            include_reference=True,
+        )
+        line_id = f"dir_{i:07d}"
+        out.append(
+            BankCredit(
+                statement_line_id=line_id,
+                value_date=value_date,
+                amount_paise=chain.invoice.amount_paise,
+                narration=narration,
+                counterparty_guess=None,
+            )
+        )
+        chain.bank_ref = line_id
+    return out
 
 
 def _settle(

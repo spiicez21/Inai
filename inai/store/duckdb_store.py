@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     run_id           VARCHAR NOT NULL,
     invoice_id       VARCHAR NOT NULL,
     customer_id      VARCHAR NOT NULL,
+    customer_name    VARCHAR NOT NULL DEFAULT '',
     issued_at        TIMESTAMP NOT NULL,
     due_at           TIMESTAMP NOT NULL,
     amount_paise     BIGINT  NOT NULL,

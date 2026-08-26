@@ -471,6 +471,7 @@ def _persist_batch(store: Store, run_id: str, built: BuildResult) -> None:
                 "run_id": [run_id] * len(batch.chains),
                 "invoice_id": [c.invoice.invoice_id for c in batch.chains],
                 "customer_id": [c.invoice.customer_id for c in batch.chains],
+                "customer_name": [c.invoice.customer_name for c in batch.chains],
                 "issued_at": [c.invoice.issued_at.replace(tzinfo=None) for c in batch.chains],
                 "due_at": [c.invoice.due_at.replace(tzinfo=None) for c in batch.chains],
                 "amount_paise": [int(c.invoice.amount_paise) for c in batch.chains],

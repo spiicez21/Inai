@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from inai.match.settlement_math import index_credits_by_utr, tie_out
 from inai.match.types import ReconInput, ReconOutput, TieOut
+from inai.match.utr import extract_receipt, extract_utr, normalise
 from inai.money import Paise, format_inr
 from inai.schema import BankCredit, Invoice, LegType, MatchResult, MatchTier, SettlementLeg
 
@@ -46,6 +47,13 @@ class _Index:
     unclaimed: list[SettlementLeg]
     #: UTR → credits that arrived after the settlement's own. Feeds DUPLICATE_PAYMENT.
     duplicate_credits: dict[str, list[BankCredit]]
+    #: Credits whose reference matches no settlement — i.e. money that did not come from
+    #: the gateway. INFERRED, never declared: the matcher is given three files and has to
+    #: work out which lines are settlements and which are customers paying us directly,
+    #: exactly as a finance team does.
+    direct_credits: list[BankCredit]
+    #: Invoice reference found in a direct credit's narration.
+    direct_by_receipt: dict[str, list[BankCredit]]
 
 
 def match(
@@ -67,11 +75,13 @@ def match(
     results: list[MatchResult] = []
 
     for invoice in data.invoices:
-        result = _match_t0(invoice, index, tie_by_settlement, claimed)
-        if result is None:
-            result = _match_t1(invoice, index, tie_by_settlement, claimed, tolerance_paise)
-        if result is None:
-            result = _unmatched(invoice)
+        result = (
+            _match_t0(invoice, index, tie_by_settlement, claimed)
+            or _match_direct_t0(invoice, index, claimed)
+            or _match_t1(invoice, index, tie_by_settlement, claimed, tolerance_paise)
+            or _match_direct_t1(invoice, index, claimed, tolerance_paise)
+            or _unmatched(invoice)
+        )
         results.append(result)
 
     return ReconOutput(matches=results, tie_outs=tie_outs)
@@ -103,12 +113,26 @@ def _build_index(data: ReconInput) -> _Index:
         if leg.type is LegType.PAYMENT and not leg.order_receipt and not leg.order_id
     ]
 
+    settlement_utrs = set(utr_by_settlement.values())
+    direct_credits = [
+        c
+        for c in data.credits
+        if (c.extracted_utr or extract_utr(c.narration)) not in settlement_utrs
+    ]
+    direct_by_receipt: dict[str, list[BankCredit]] = defaultdict(list)
+    for credit in direct_credits:
+        receipt = extract_receipt(credit.narration)
+        if receipt:
+            direct_by_receipt[receipt].append(credit)
+
     return _Index(
         legs_by_receipt=dict(by_receipt),
         legs_by_order=dict(by_order),
         legs_by_settlement=dict(by_settlement),
         credit_by_utr=credit_by_utr,
         duplicate_credits=duplicate_credits,
+        direct_credits=direct_credits,
+        direct_by_receipt=dict(direct_by_receipt),
         utr_by_settlement=utr_by_settlement,
         unclaimed=unclaimed,
     )
@@ -261,3 +285,106 @@ def _unmatched(invoice: Invoice) -> MatchResult:
         ),
         matched=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct payments — ledger × bank, two-way. Most of B2B receivables.
+# ---------------------------------------------------------------------------
+#: How much of the payer name must survive for the payer to count as "consistent".
+#: Only used to REJECT a candidate, never to accept one on its own.
+PAYER_TOKEN_OVERLAP = 0.5
+
+
+def _match_direct_t0(invoice: Invoice, index: _Index, claimed: set[str]) -> MatchResult | None:
+    """The invoice reference survived in the narration. Unique both ways."""
+    candidates = [
+        c
+        for c in index.direct_by_receipt.get(invoice.invoice_id, [])
+        if c.statement_line_id not in claimed
+    ]
+    if len(candidates) != 1:
+        return None
+
+    credit = candidates[0]
+    claimed.add(credit.statement_line_id)
+    residual = Paise(int(invoice.amount_paise) - int(credit.amount_paise))
+    return MatchResult(
+        ledger_ref=invoice.invoice_id,
+        settlement_refs=[],
+        bank_refs=[credit.statement_line_id],
+        tier=MatchTier.T0_EXACT,
+        confidence=1.0,
+        residual_paise=residual,
+        explanation=(
+            f"direct transfer: reference {invoice.invoice_id} in narration of "
+            f"{credit.statement_line_id}; invoice {format_inr(invoice.amount_paise)} vs "
+            f"credit {format_inr(credit.amount_paise)}"
+            + (f", residual {format_inr(residual)}" if int(residual) else ", exact")
+        ),
+        matched=True,
+    )
+
+
+def _match_direct_t1(
+    invoice: Invoice, index: _Index, claimed: set[str], tolerance_paise: int
+) -> MatchResult | None:
+    """No reference. Amount is the hard constraint; payer identity only narrows.
+
+    This is where a parent-company payer (C08) and a customer-side deduction (C10) actually
+    bite: the first breaks payer consistency, the second breaks the amount. Neither can be
+    rescued at T1 without guessing, and guessing here closes an invoice that was never paid.
+    """
+    expected_payer = _payer_tokens(invoice.customer_name)
+
+    candidates = [
+        c
+        for c in index.direct_credits
+        if c.statement_line_id not in claimed
+        and abs(int(c.amount_paise) - int(invoice.amount_paise)) <= tolerance_paise
+        and abs((c.value_date - invoice.issued_at.date()).days) <= T1_WINDOW_DAYS
+    ]
+    if not candidates:
+        return None
+
+    consistent = [c for c in candidates if _payer_consistent(expected_payer, c.narration)]
+    if not consistent:
+        # Money of the right size arrived in the right window from someone we do not
+        # recognise. That is a finding, not a match.
+        return None
+    if len(consistent) > 1:
+        return None  # ambiguity rule: do not pick one
+
+    credit = consistent[0]
+    claimed.add(credit.statement_line_id)
+    return MatchResult(
+        ledger_ref=invoice.invoice_id,
+        settlement_refs=[],
+        bank_refs=[credit.statement_line_id],
+        tier=MatchTier.T1_DETERMINISTIC,
+        confidence=0.85,
+        residual_paise=Paise(int(invoice.amount_paise) - int(credit.amount_paise)),
+        explanation=(
+            f"direct transfer: no reference; amount {format_inr(invoice.amount_paise)} and "
+            f"payer both consistent with {credit.statement_line_id} "
+            f"({credit.value_date.isoformat()})"
+        ),
+        matched=True,
+    )
+
+
+def _payer_tokens(customer_name: str) -> set[str]:
+    """The payer name the LEDGER holds, as tokens.
+
+    Read straight off the invoice — the merchant's customer master. Short tokens are
+    dropped because "&", "CO" and "LTD" appear on half the companies in India and would
+    make any two payers look alike.
+    """
+    return {t for t in normalise(customer_name).split() if len(t) > 2}
+
+
+def _payer_consistent(expected: set[str], narration: str) -> bool:
+    if not expected:
+        return True
+    seen = set(normalise(narration).split())
+    overlap = len(expected & seen) / len(expected)
+    return overlap >= PAYER_TOKEN_OVERLAP

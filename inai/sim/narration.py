@@ -101,3 +101,111 @@ def utr_grammar_from_sample() -> None:
     raise NotImplementedError(
         "Pull data/reference/razorpay_settlement_sample.json first — DATA.md §1.2."
     )
+
+
+# ---------------------------------------------------------------------------
+# Direct payments — the customer transfers to the merchant's bank themselves
+# ---------------------------------------------------------------------------
+#: Fragments for plausible Indian B2B payer names. Combined deterministically from the
+#: customer id, so one customer always presents the same remitter string — which is what
+#: makes payer identity a usable matching signal, and what makes C08 (paying from a parent
+#: company's account) an actual anomaly rather than noise.
+_NAME_HEADS = (
+    "SHREE",
+    "SRI",
+    "NEW",
+    "ROYAL",
+    "PRIME",
+    "GLOBAL",
+    "UNITED",
+    "NATIONAL",
+    "ORIENT",
+    "PIONEER",
+    "SUNRISE",
+    "GREEN",
+    "METRO",
+    "APEX",
+    "STAR",
+)
+_NAME_STEMS = (
+    "KRISHNA",
+    "BALAJI",
+    "GANESH",
+    "LAXMI",
+    "VENKAT",
+    "RAGHAV",
+    "MURUGAN",
+    "SARASWATI",
+    "NARAYAN",
+    "ARIHANT",
+    "VIJAY",
+    "AMBIKA",
+    "KAVERI",
+    "GODAVARI",
+)
+_NAME_TAILS = (
+    "TRADERS",
+    "ENTERPRISES",
+    "INDUSTRIES",
+    "AGENCIES",
+    "TEXTILES",
+    "STEELS",
+    "PHARMA",
+    "LOGISTICS",
+    "ENGINEERING",
+    "AUTOMOBILES",
+    "PLASTICS",
+    "PACKAGING",
+)
+_NAME_SUFFIX = ("PVT LTD", "LTD", "& CO", "LLP", "")
+
+
+def payer_name(customer_id: str) -> str:
+    """A stable remitter name for one customer.
+
+    Derived from the id by hashing, NOT by an RNG draw: the same customer must present the
+    same name in every run and on every invoice, or payer identity carries no information.
+    """
+    h = 0
+    for ch in customer_id:
+        h = (h * 131 + ord(ch)) & 0xFFFFFFFF
+    parts = [
+        _NAME_HEADS[h % len(_NAME_HEADS)],
+        _NAME_STEMS[(h >> 5) % len(_NAME_STEMS)],
+        _NAME_TAILS[(h >> 11) % len(_NAME_TAILS)],
+        _NAME_SUFFIX[(h >> 17) % len(_NAME_SUFFIX)],
+    ]
+    return " ".join(p for p in parts if p)
+
+
+def direct_narration(
+    rng: np.random.Generator,
+    *,
+    customer_name: str,
+    invoice_id: str,
+    amount_paise: int,
+    value_date: date,
+    include_reference: bool,
+) -> tuple[str, str]:
+    """`(narration, utr_or_rrn)` for a customer's own bank transfer.
+
+    Unlike a settlement credit, this one names the CUSTOMER as remitter and usually carries
+    the invoice reference — which is why direct payments are easy when the reference
+    survives and genuinely hard when it does not.
+    """
+    remitter = customer_name
+    ref = invoice_id if include_reference else ""
+
+    # RTGS above ₹2 lakh, UPI for small amounts, NEFT/IMPS in between.
+    roll = rng.random()
+    if amount_paise >= 200_000_00:
+        utr = make_utr(rng, value_date)
+        return rtgs(utr, remitter) + (f"-{ref}" if ref else ""), utr
+    if amount_paise < 100_000_00 and roll < 0.35:
+        rrn = make_rrn(rng)
+        return upi(rrn, make_vpa(rng, remitter), ref), rrn
+    if roll < 0.6:
+        rrn = make_rrn(rng)
+        return imps(rrn, remitter, ref), rrn
+    utr = make_utr(rng, value_date)
+    return neft(utr, remitter, ref), utr
