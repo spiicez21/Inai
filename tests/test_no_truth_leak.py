@@ -57,14 +57,62 @@ def test_no_static_truth_import(path: Path) -> None:
         )
 
 
+def _code_only(path: Path) -> str:
+    """Source with comments and docstrings removed.
+
+    The guard must scan CODE, not prose. Searching raw text made it impossible to *explain*
+    the rule inside the very modules that have to obey it — this test failed on a docstring
+    that said "match/** may not import sim.truth". A rule you cannot document is a rule
+    people will break by accident.
+
+    Other string literals survive, because `importlib.import_module("inai.sim.truth")` is
+    exactly the dynamic form this check exists to catch.
+    """
+    src = path.read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=str(path))
+
+    docstring_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            first = node.body[0] if node.body else None
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+                and first.end_lineno is not None
+            ):
+                docstring_lines.update(range(first.lineno, first.end_lineno + 1))
+
+    out: list[str] = []
+    for i, line in enumerate(src.splitlines(), start=1):
+        if i in docstring_lines:
+            continue
+        out.append(line.split("#", 1)[0])
+    return "\n".join(out)
+
+
 @pytest.mark.parametrize("path", _quarantined_files(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_no_dynamic_truth_import(path: Path) -> None:
     """`importlib.import_module("inai.sim.truth")` and friends — the form ruff cannot see."""
-    src = path.read_text(encoding="utf-8")
+    code = _code_only(path)
     for needle in ("sim.truth", "sim/truth", "ground_truth", "truth_links", "LatentState"):
-        assert needle not in src, (
-            f"{path.relative_to(REPO_ROOT)} references {needle!r}. See DATA.md §5.3."
+        assert needle not in code, (
+            f"{path.relative_to(REPO_ROOT)} references {needle!r} in CODE. See DATA.md §5.3."
         )
+
+
+def test_the_dynamic_guard_still_catches_a_real_leak(tmp_path: Path) -> None:
+    """The guard is now lenient about prose, so prove it is still strict about code."""
+    leak = tmp_path / "leaky.py"
+    leak.write_text(
+        '"""A docstring mentioning sim.truth is fine."""\n'
+        "import importlib\n"
+        'mod = importlib.import_module("inai.sim.truth")\n',
+        encoding="utf-8",
+    )
+    code = _code_only(leak)
+    assert "sim.truth" in code
+    assert "A docstring mentioning" not in code
 
 
 def test_quarantine_actually_covers_something() -> None:
