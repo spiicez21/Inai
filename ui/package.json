@@ -1,13 +1,14 @@
 {
-  "name": "ui",
+  "name": "inai-ui",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "typecheck": "tsc -b --noEmit",
+    "preview": "vite preview",
+    "lint": "oxlint"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
