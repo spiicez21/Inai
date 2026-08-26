@@ -1,0 +1,126 @@
+@import 'tailwindcss';
+
+/* ===========================================================================
+   INAI design tokens — Tailwind v4, CSS-first. No tailwind.config.js.
+
+   Dark-first, dense, monospace numerics. Neutral base, ONE accent.
+   Semantics carry all remaining colour, and each one means exactly one thing:
+
+     matched   green   the money tied out
+     exception amber   an honest gap, displayed not hidden
+     blocked   red     a policy rule fired and stopped us
+     suppressed grey   deliberately no action — still a decision
+
+   Tier badges T0->T4 ride a single-hue ramp so "harder = darker" reads
+   without a legend.
+   =========================================================================== */
+@theme {
+  --font-sans:
+    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* Base — zinc, cool, low-chroma */
+  --color-base-950: oklch(0.145 0.005 285);
+  --color-base-925: oklch(0.17 0.005 285);
+  --color-base-900: oklch(0.196 0.006 286);
+  --color-base-850: oklch(0.23 0.006 286);
+  --color-base-800: oklch(0.274 0.006 286);
+  --color-base-700: oklch(0.37 0.008 286);
+  --color-base-600: oklch(0.442 0.011 286);
+  --color-base-500: oklch(0.552 0.014 286);
+  --color-base-400: oklch(0.705 0.015 286);
+  --color-base-300: oklch(0.82 0.012 286);
+  --color-base-100: oklch(0.945 0.006 286);
+  --color-base-50: oklch(0.985 0.002 286);
+
+  /* The one accent. Used for focus, the active nav item, and nothing decorative. */
+  --color-accent: oklch(0.72 0.16 248);
+  --color-accent-dim: oklch(0.52 0.13 248);
+  --color-accent-bg: oklch(0.28 0.06 248);
+
+  /* Semantics */
+  --color-matched: oklch(0.75 0.16 152);
+  --color-matched-bg: oklch(0.28 0.06 152);
+  --color-exception: oklch(0.79 0.15 78);
+  --color-exception-bg: oklch(0.3 0.06 78);
+  --color-blocked: oklch(0.68 0.19 22);
+  --color-blocked-bg: oklch(0.29 0.08 22);
+  --color-suppressed: oklch(0.62 0.01 286);
+
+  /* Difficulty ramp. T0 pale = easy and meaningless; T4 deep = where we lose. */
+  --color-tier-0: oklch(0.85 0.05 248);
+  --color-tier-1: oklch(0.74 0.09 248);
+  --color-tier-2: oklch(0.63 0.13 248);
+  --color-tier-3: oklch(0.52 0.15 262);
+  --color-tier-4: oklch(0.44 0.17 288);
+
+  --radius-card: 0.625rem;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-base-950 text-base-100 font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  }
+
+  /* Money and counts MUST use tabular figures. Proportional digits make columns of
+     rupees jitter, and a finance tool whose numbers do not line up reads as amateur
+     before anyone has read a single value. */
+  .num,
+  th[data-num],
+  td[data-num] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background: var(--color-accent-bg);
+  }
+
+  /* Dense scrollbars — this is a data tool, not a marketing page. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-base-700) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-base-700);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-base-900 border-base-800 rounded-[--radius-card] border;
+  }
+
+  .hairline {
+    @apply border-base-800 border-t;
+  }
+
+  /* Small-caps section label. Used once per panel, never twice. */
+  .eyebrow {
+    @apply text-base-500 text-[0.6875rem] font-medium tracking-[0.08em] uppercase;
+  }
+}
