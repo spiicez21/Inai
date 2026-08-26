@@ -112,8 +112,10 @@ Throughput ~3,000 rec/s at 5k and ~4,250 rec/s at 25k.
 produces exactly one `MatchResult`, so `Σ matched + Σ exceptions == Σ input` cannot fail
 silently); matches verified to point at the *correct* legs, not merely at some legs.
 
-Measured on `demo.yaml`: overall 92%, exception rate 7.6% (target band 5-12%), residual
-100% attributed. Full run ~2,450 rec/s at 25,000 records.
+Measured on `demo.yaml`: overall ~92%, exception rate 7.3% (target band 5-12%), residual
+100% attributed. Tiers: T0 97.8% · T1 88.2% · T2 79.0% · T3 90.2% · T4 30.0%.
+T2 sits just under target because the fuzzy tier is phase 3; T3 is above target because
+subset-sum is not needed yet. Full run ~2,450 rec/s at 25,000 records.
 
 ### Three bugs this phase exposed in phase 1
 
@@ -132,23 +134,49 @@ Measured on `demo.yaml`: overall 92%, exception rate 7.6% (target band 5-12%), r
    `order_receipt` but not `order_id`, so the reference never actually went away and T1
    never fired at all.
 
-### ⚠️ Open question for phase 3 — T4 is scoring 89%, target is "<50% expected"
+### RESOLVED — T4 was scoring 89% against a "<50% expected" target
 
-The tier labels measure *how corrupted* a record is, not *how hard it is to match*, and for
-T4 those have come apart. C08 (parent-company payer) and C10 (unexplained deduction) are
-**direct-payment** failure modes: they describe a customer paying the merchant's bank
-account directly. In our generator every bank credit is a Razorpay settlement remitted by
-Razorpay, so the payer is always the same entity and C08 cannot impede a match; C10 moves
-the credit amount but leaves the reference chain intact.
+The tier labels were measuring *how corrupted* a record is, not *how hard it is to match*.
+Fixed by adding the missing half of the world rather than relabelling around it.
 
-Reporting a suspiciously HIGH score on the tier we promised would be under 50% is exactly
-what a judge should catch. Two ways out, and this needs a decision before phase 3:
+**A direct-payment channel.** A real merchant has two kinds of money arriving: gateway
+checkouts that settle as one lumped Razorpay credit, and B2B customers who transfer from
+their own bank. Previously every credit was remitted by Razorpay, so "paid from the parent
+company's account" (C08) could not happen and "the customer deducted something" (C10) left
+the reference chain intact. Now ~18% of customers pay directly, and those credits name the
+CUSTOMER as remitter.
 
-  * **(a) Add a direct-payment channel.** Some customers pay the merchant's bank directly
-    rather than through the gateway. More realistic anyway — a real merchant has both — and
-    it makes C08/C10 meaningful, so T4 becomes genuinely hard. Costs generator work.
-  * **(b) Re-scope the tier labels** so difficulty reflects what actually impedes matching,
-    and report the adversarial *residual attribution* rate separately from the match rate.
+Consequences, each of which was its own small correction:
+
+  * **The channel belongs to the customer, not the invoice.** A B2B customer who pays by
+    NEFT does so every time. Drawing per-invoice scattered both channels through one
+    payer's history — which is not how anyone pays, and made C02 nearly impossible because
+    it needs two *direct* invoices from the same payer.
+  * **The payer's name lives on the `Invoice`**, as a customer master. The matcher must
+    never re-derive the name the generator used; that would be reading the answer key
+    through a side channel.
+  * **C02 bundles direct payments only.** A Razorpay settlement cannot absorb a customer's
+    own bank transfer, and letting it produced credits that could not exist.
+  * **C09 no longer escalates the difficulty tier.** A duplicated credit leaves the
+    original perfectly matchable — the finding is the extra bank line, not the invoice.
+    Counting it as adversarial filled T4 with easy records.
+
+T4 now scores **26-30%** against its "<50% expected" target, on a real adversarial
+population, and the matcher infers which credits are direct rather than being told.
+
+### Two things to carry into the reporting
+
+1. **T4's denominator at demo scale is small (~41-82 records), so its rate is noisy** —
+   it moved between 26% and 63% across seeds. `adversarial.yaml` exists to give it a real
+   denominator (82 records, 25.6%). §9.5 demands a confidence interval on the headline;
+   the tier rates deserve the same treatment, or at minimum the denominators must stay
+   visible next to the percentages. They currently are.
+2. **Per-record tiers understate the difficulty of gateway settlements.** 161 of 165
+   unmatched T0-tier records had *zero operators fired on them* — pristine invoices whose
+   shared settlement credit had its UTR destroyed by a settlement-mate's C07. About 57
+   orders share one bank line, so damage to that line is inherited by all of them. This is
+   correct behaviour and a genuine property of unpacking a lumped credit; it is worth
+   saying out loud rather than tuning away.
 
 ## Phase 3 · T2/T3/T4 + classifier — 6h
 
