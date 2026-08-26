@@ -15,11 +15,11 @@ Status as of 2026-08-26.
 |---|---|
 | 0 · Skeleton | **Done** — schemas, config, store, CLI, CI, truth-leak guard, 88 tests green |
 | 1 · Data pipeline | **Done** — Olist spine, forward generation, 14 operators, 5,000 records at ~3,000 rec/s |
-| 2 · Settlement math + T0/T1 | **NEXT** |
-| 3 · T2/T3/T4 + classifier | Not started |
+| 2 · Settlement math + T0/T1 | **Done** — tie-out, T0/T1 cascade, scored against truth |
+| 3 · T2/T3/T4 + classifier | **NEXT** |
 | 4 · Recovery core | Not started |
 | 5 · Policy gate + ladder + PTP | Not started |
-| 6 · Measurement harness | Contracts only — `Scorecard` shape is fixed, values are fabricated |
+| 6 · Measurement harness | Recon half is real (`eval/score_match.py`); recovery half fabricated |
 | 7 · Scorecard UI | **Shell done** — reads real artifacts, drill-down works; decision chain pending phases 4–5 |
 | 8 · Live channel + voice | Not started |
 | 9 · P1 receivables | Not started |
@@ -98,17 +98,57 @@ Throughput ~3,000 rec/s at 5k and ~4,250 rec/s at 25k.
 ---
 
 
-## Phase 2 · Settlement math + T0/T1 — 5h
+## Phase 2 · Settlement math + T0/T1 — DONE
 
-- [ ] `match/settlement_math.py` — gross→net tie-out, paise-exact
-- [ ] `match/utr.py` — regex extraction; LLM only on regex failure
-- [ ] `match/cascade.py` — T0 (unique UTR / order_id), T1 (amount ±₹1, date window, payer)
-- [ ] `tests/test_settlement_math.py`
-- [ ] `tests/test_match_conservation.py` — `Σ matched + Σ exceptions == Σ input`
+- [x] `match/settlement_math.py` — gross→net tie-out, paise-exact, with attribution
+- [x] `match/utr.py` — regex extraction, survives C07/C14 mangling; LLM path stubbed
+- [x] `match/cascade.py` — T0 (reference + UTR, unique both ways), T1 (amount ±₹1 + window)
+- [x] `match/types.py` — neutral input contract, so `match/**` imports nothing from `sim/`
+- [x] `eval/score_match.py` — tiered rates scored against ground truth
+- [x] `tests/test_settlement_math.py` — 21 hand-checked cases
+- [x] `tests/test_match_conservation.py` — 23 invariants
 
-**Acceptance:** paise-exact tie-out; conservation holds on every run.
+**Acceptance met:** paise-exact tie-out; conservation holds structurally (every invoice
+produces exactly one `MatchResult`, so `Σ matched + Σ exceptions == Σ input` cannot fail
+silently); matches verified to point at the *correct* legs, not merely at some legs.
 
----
+Measured on `demo.yaml`: overall 92%, exception rate 7.6% (target band 5-12%), residual
+100% attributed. Full run ~2,450 rec/s at 25,000 records.
+
+### Three bugs this phase exposed in phase 1
+
+1. **Narration operators fired ~57× per credit.** C07/C08/C14 rewrite the *shared*
+   settlement credit but were applied per-chain, and ~57 orders share a settlement. A
+   nominal 12% rate became an effective ~100%: repeated truncation and case-scrambling
+   destroyed 56% of UTRs. Fixed with `once_per_credit`. Amount-shifting operators are
+   deliberately NOT deduped — several orders in one settlement each having a fee variance
+   is real; rewriting one string 57 times is not.
+2. **Duplicate credits killed their own settlement.** Treating a repeated UTR as an
+   unusable ambiguity and dropping both made the original credit unfindable, so every
+   invoice in that settlement went unmatched — and it hid the duplicate payment, which is
+   itself a finding. Now: earliest value date is the settlement, later identical credits
+   are re-submissions.
+3. **C01 left a perfect join key in place.** "Strip remittance reference" cleared
+   `order_receipt` but not `order_id`, so the reference never actually went away and T1
+   never fired at all.
+
+### ⚠️ Open question for phase 3 — T4 is scoring 89%, target is "<50% expected"
+
+The tier labels measure *how corrupted* a record is, not *how hard it is to match*, and for
+T4 those have come apart. C08 (parent-company payer) and C10 (unexplained deduction) are
+**direct-payment** failure modes: they describe a customer paying the merchant's bank
+account directly. In our generator every bank credit is a Razorpay settlement remitted by
+Razorpay, so the payer is always the same entity and C08 cannot impede a match; C10 moves
+the credit amount but leaves the reference chain intact.
+
+Reporting a suspiciously HIGH score on the tier we promised would be under 50% is exactly
+what a judge should catch. Two ways out, and this needs a decision before phase 3:
+
+  * **(a) Add a direct-payment channel.** Some customers pay the merchant's bank directly
+    rather than through the gateway. More realistic anyway — a real merchant has both — and
+    it makes C08/C10 meaningful, so T4 becomes genuinely hard. Costs generator work.
+  * **(b) Re-scope the tier labels** so difficulty reflects what actually impedes matching,
+    and report the adversarial *residual attribution* rate separately from the match rate.
 
 ## Phase 3 · T2/T3/T4 + classifier — 6h
 
