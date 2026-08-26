@@ -1,0 +1,101 @@
+import { fmtCount, fmtPct, TIER_LABEL } from '@/lib/format'
+import type { ReconMetrics } from '@/types/scorecard'
+import { Card, Meter, PanelHeader, TierBadge } from './primitives'
+
+/**
+ * Match rate by difficulty tier. Never blended.
+ *
+ * The `proves` column is the point of this panel. A blended 91% is dominated by T0 exact-
+ * reference matches that were never hard; showing T0 at ~100% next to the words "Nothing.
+ * Say so on the slide." is what separates this from a vendor number.
+ */
+export function TierPanel({ recon }: { recon: ReconMetrics }) {
+  return (
+    <Card>
+      <PanelHeader
+        title="Match rate by difficulty tier"
+        note="Never blended. Vendors publish one number dominated by exact-reference matches that were never hard."
+        right={
+          <div className="text-right">
+            <div className="num text-base-300 text-sm">{fmtPct(recon.auto_match_rate_pct)}</div>
+            <div className="text-base-500 text-[0.6875rem]">auto-match (T0–T2)</div>
+          </div>
+        }
+      />
+      <div className="hairline">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-base-500 border-base-800 border-b text-[0.6875rem] tracking-wide uppercase">
+              <th className="py-2 pr-2 pl-4 text-left font-medium">Tier</th>
+              <th className="px-2 py-2 text-right font-medium" data-num>
+                Eligible
+              </th>
+              <th className="px-2 py-2 text-right font-medium" data-num>
+                Matched
+              </th>
+              <th className="px-2 py-2 text-right font-medium" data-num>
+                Rate
+              </th>
+              <th className="w-[26%] px-3 py-2 text-left font-medium">vs target</th>
+              <th className="py-2 pr-4 pl-2 text-left font-medium">What it proves</th>
+            </tr>
+          </thead>
+          <tbody>
+            {recon.tiers.map((t) => {
+              const below = t.match_rate_pct < t.target_pct_low
+              return (
+                <tr key={t.tier} className="border-base-850 border-b last:border-0">
+                  <td className="py-2.5 pr-2 pl-4">
+                    <div className="flex items-center gap-2">
+                      <TierBadge tier={t.tier} />
+                      <span className="text-base-300 hidden text-xs sm:inline">
+                        {TIER_LABEL[t.tier].split(' · ')[1]}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="num text-base-400 px-2 py-2.5 text-right text-xs">
+                    {fmtCount(t.eligible)}
+                  </td>
+                  <td className="num text-base-200 px-2 py-2.5 text-right text-xs">
+                    {fmtCount(t.matched)}
+                  </td>
+                  <td
+                    className={`num px-2 py-2.5 text-right text-xs font-medium ${
+                      below ? 'text-exception' : 'text-matched'
+                    }`}
+                  >
+                    {fmtPct(t.match_rate_pct)}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <Meter
+                      value={t.match_rate_pct}
+                      target={[t.target_pct_low, t.target_pct_high]}
+                      tone={below ? 'exception' : 'matched'}
+                    />
+                    <div className="text-base-600 mt-1 font-mono text-[0.625rem]">
+                      target {t.target_pct_low.toFixed(0)}–{t.target_pct_high.toFixed(0)}%
+                    </div>
+                  </td>
+                  <td className="text-base-400 py-2.5 pr-4 pl-2 text-xs italic">{t.proves}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="hairline text-base-500 flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 text-xs">
+        <span>
+          Overall <span className="num text-base-300">{fmtPct(recon.overall_match_rate_pct)}</span>
+        </span>
+        <span>
+          Exception rate{' '}
+          <span className="num text-exception">{fmtPct(recon.exception_rate_pct)}</span>
+        </span>
+        <span>
+          Residual explained{' '}
+          <span className="num text-base-300">{fmtPct(recon.residual_explained_pct)}</span>
+        </span>
+      </div>
+    </Card>
+  )
+}
