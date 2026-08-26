@@ -83,3 +83,20 @@ def test_all_three_arms_present(tmp_path: Path, arm_field: str) -> None:
     false dunning measurable (INAI_SPEC.md §9.1)."""
     arms = {a["arm"] for a in _scorecard(tmp_path)["recovery"]["arms"]}
     assert arm_field in arms
+
+
+def test_partial_runs_carry_a_provenance_warning(tmp_path: Path) -> None:
+    """While any figure is fabricated, the scorecard must SAY so, structurally.
+
+    This was a string prefix in `limitations` once. Renaming the banner text silently
+    removed it from the dashboard while the fabricated numbers stayed on screen, which is
+    the precise failure this project cannot afford. A dedicated field cannot be switched
+    off by a typo — and this test fails if someone clears it before the numbers are real.
+    """
+    sc = _scorecard(tmp_path)
+    warning = sc.get("provenance_warning")
+    assert warning, (
+        "provenance_warning is empty. Clear it only once the matcher, classifier and "
+        "recovery core actually produce these figures (INAI_SPEC.md §11 phases 2-6)."
+    )
+    assert "NOT implemented" in warning
