@@ -1,0 +1,5 @@
+name: demo
+n_records: 5000
+seed: 42
+description: "The headline run. Every number in the deck comes from this config + this seed."
+llm_mode: replay

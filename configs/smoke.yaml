@@ -1,0 +1,5 @@
+name: smoke
+n_records: 200
+seed: 42
+description: "CI lane and fast iteration. Runs end-to-end on every commit."
+llm_mode: replay
