@@ -14,8 +14,8 @@ Status as of 2026-08-26.
 | Phase | State |
 |---|---|
 | 0 · Skeleton | **Done** — schemas, config, store, CLI, CI, truth-leak guard, 88 tests green |
-| 1 · Data pipeline | Not started |
-| 2 · Settlement math + T0/T1 | Not started |
+| 1 · Data pipeline | **Done** — Olist spine, forward generation, 14 operators, 5,000 records at ~3,000 rec/s |
+| 2 · Settlement math + T0/T1 | **NEXT** |
 | 3 · T2/T3/T4 + classifier | Not started |
 | 4 · Recovery core | Not started |
 | 5 · Policy gate + ladder + PTP | Not started |
@@ -25,9 +25,10 @@ Status as of 2026-08-26.
 | 9 · P1 receivables | Not started |
 | 10 · Deck + METHODOLOGY | Not started |
 
-`inai run` currently emits a **placeholder scorecard**: correct shape, fabricated numbers,
-banner-flagged on both the CLI and the dashboard. Delete `_placeholder_*` in
-`inai/pipeline.py` as the real stages land.
+`inai run` now emits a **partial scorecard**: the records, amounts, settlements and difficulty
+tiers are REAL (phase 1); the match rates, recovery figures and bridge metrics are still
+fabricated. Flagged by `Scorecard.provenance_warning` on the CLI and the dashboard. Delete
+`_placeholder_*` in `inai/pipeline.py` as phases 2-6 land.
 
 ---
 
@@ -46,30 +47,56 @@ banner-flagged on both the CLI and the dashboard. Delete `_placeholder_*` in
 
 ---
 
-## Phase 1 · Data pipeline — 7h — NEXT
+## Phase 1 · Data pipeline — DONE
 
-The foundation. Everything downstream inherits its quality. `DATA.md` §5.
+Olist spine is in `data/spine/` (git-ignored, CC BY-NC-SA).
 
-### Day-one checklist (`DATA.md` §9)
-- [ ] Razorpay test-mode account; test keys in `.env` (never committed)
-- [ ] `settlements.reports()` → `data/reference/razorpay_settlement_sample.json`
-- [ ] Assert generator output validates against that real payload shape
-- [ ] Derive the real UTR grammar from it — do not invent one
-- [ ] Olist CSVs → `data/spine/`
-- [ ] UK late-payment disclosures → `data/receivables/`
-- [ ] NPCI BD/TD + downtime CSVs → `data/reference/`
+- [x] `sim/spine.py` — loads Olist, samples **customer-first** so repeat payers exist
+- [x] `sim/localize.py` — `RAIL_MAP`, rank-preserving INR rescale, UPI-dominant re-weighting
+- [x] `sim/narration.py` — NEFT/IMPS/UPI/RTGS grammar, 16-char UTR
+- [x] `sim/generate.py` — forward chain, paise-exact `gross − MDR − GST − TCS ± refunds`
+- [x] `sim/corrupt.py` — all 14 operators C01–C14, each recording which fired
+- [x] `sim/truth.py` — `TruthLink`, tier = hardest operator that fired, oracle-gap flag
+- [x] `sim/build.py` — generate → corrupt → truth
+- [x] Child RNG stream per operator, keyed by *sorted* id
+- [x] Persisted to DuckDB; truth to the separate `ground_truth` schema
+- [x] 21 property tests in `tests/test_generation.py`
 
-### Build
-- [ ] `sim/localize.py` — `RAIL_MAP`, rank-preserving INR rescale, UPI-dominant re-weighting
-- [ ] `sim/generate.py` — forward chain: invoice → order → payment(s) → leg(s) → bank credit
-- [ ] `sim/narration.py` — NEFT/IMPS/UPI/RTGS grammar
-- [ ] `sim/corrupt.py` — all 14 operators C01–C14, each recording which fired
-- [ ] `sim/truth.py` — write `TruthLink` rows; tier = hardest operator that fired
-- [ ] Child RNG stream per operator (`rng.spawn`), so reordering operators cannot change output
+**Acceptance met:** 4,999 records from `demo.yaml`, seeded-identical, truth-leak test passes.
 
-**Acceptance:** 5,000 records, seeded-identical across runs, truth-leak test passes.
+Measured at 5,000 records: 56.8 orders per settlement, tiers T0 52.8% / T1 12.2% /
+T2 21.9% / T3 8.1% / T4 5.1%, all 14 operators firing, 690 repeat payers.
+Throughput ~3,000 rec/s at 5k and ~4,250 rec/s at 25k.
 
+### Four decisions taken during the build, all deck-relevant
+
+1. **Customer-first sampling with a `repeat_boost`.** Olist issues a fresh `customer_id`
+   per order; `customer_unique_id` is the real payer. Order-first sampling gave every
+   invoice its own customer, so C02 (bundle N invoices into one credit) could never fire
+   and the recovery scorer had no repeat-payer history. `repeat_boost` then oversamples
+   multi-order customers — a **deliberate deviation** from the spine's distribution,
+   because Olist is consumer e-commerce and INAI targets recurring/B2B receivables.
+2. **Timeline compression.** The spine spans Sep 2016 – Oct 2018. Keyed by value date that
+   produced ~168 settlements of one order each, when the entire problem statement is one
+   lumped credit covering hundreds of orders. Compressed to a 90-day operating window,
+   rank-preserving, anchored to a fixed date so a run cannot change because the clock did.
+3. **Two operator kinds.** DATA.md's per-record `Protocol` cannot express C02 or C09;
+   both need several chains at once. `BatchOperator` is the second interface.
+4. **Arrow-registered inserts, not `executemany`.** Parameterised executemany took **180
+   seconds** for 15,000 rows; registering an Arrow frame takes **1.4 seconds**. Without
+   this the throughput slide would have been a lie.
+
+### Still outstanding from the day-one checklist
+
+- [ ] **Razorpay test-mode account** → `data/reference/razorpay_settlement_sample.json`.
+      Needed for the schema-conformance test and to replace the *synthetic* UTR grammar
+      with the observed one (`narration.utr_grammar_from_sample` currently raises).
+      **Bank narration realism remains the largest synthetic-data risk — slide 14.**
+- [ ] NPCI BD/TD + downtime CSVs → `data/reference/` (phase 4 needs them)
+- [ ] UK late-payment disclosures → `data/receivables/` (phase 9)
+- [ ] Golden fixtures, ~30 hand-checked cases → `data/fixtures/` (DATA.md §8)
 ---
+
 
 ## Phase 2 · Settlement math + T0/T1 — 5h
 
@@ -182,6 +209,10 @@ carries an explanation a human can check in five seconds.
 
 ## Known debt / decisions taken
 
+- **The provenance warning is now a dedicated `Scorecard.provenance_warning` field**, not
+  a magic prefix in `limitations`. It was a prefix; renaming the banner text silently
+  removed it from the dashboard while the fabricated numbers stayed on screen.
+  `tests/test_determinism.py` fails if it is cleared while figures are still synthetic.
 - **`temperature` is removed on current Claude models** — `INAI_SPEC.md` §8.1's "temp 0"
   returns a 400. Use `output_config: {format, effort}` + `strict: true` instead.
 - **Model pinned to `claude-opus-5`**, not the spec's `claude-sonnet-4-6` (stale). Flagged
