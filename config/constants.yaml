@@ -1,0 +1,443 @@
+# INAI calibration constants — INAI_SPEC.md §3, provenance map in DATA.md §7.
+#
+# CONTRACT: every entry carries value / unit / source / as_of / verify.
+# Do not invent numbers. Do not inline a number in code — read it through
+# `ResolvedConfig.constant("group.key")` so the source travels with the value.
+#
+# verify: true  =>  a regulatory or schema fact that MOVES. Re-check live before demo day.
+
+# ---------------------------------------------------------------------------
+# §3.1 Settlement & fee economics
+# ---------------------------------------------------------------------------
+mdr:
+  upi_pct:
+    value: 0.0
+    unit: percent
+    source: "Government of India zero-MDR mandate on UPI"
+    as_of: "2026-08"
+    verify: false
+  debit_card_pct:
+    value: 1.75
+    unit: percent
+    range: [1.5, 2.0]
+    source: "practitioner settlement reference"
+    as_of: "2026-08"
+    verify: false
+  credit_card_pct:
+    value: 2.0
+    unit: percent
+    source: "practitioner settlement reference"
+    as_of: "2026-08"
+    verify: false
+  intl_credit_pct:
+    value: 3.0
+    unit: percent
+    range: [2.5, 3.5]
+    source: "practitioner settlement reference"
+    as_of: "2026-08"
+    verify: false
+  netbanking_pct:
+    value: 1.6
+    unit: percent
+    source: "practitioner settlement reference"
+    as_of: "2026-08"
+    verify: false
+  wallet_pct:
+    value: 1.8
+    unit: percent
+    source: "practitioner settlement reference"
+    as_of: "2026-08"
+    verify: false
+
+tax:
+  gst_on_mdr_pct:
+    value: 18.0
+    unit: percent
+    source: "GST on payment gateway fee; ITC-eligible for GST-registered merchants"
+    as_of: "2026-08"
+    verify: false
+  tcs_marketplace_applicable:
+    value: true
+    unit: bool
+    source: "marketplace operators only"
+    as_of: "2026-08"
+    verify: true
+
+settlement:
+  cycle_days_min:
+    value: 1
+    unit: days
+    source: "varies by gateway and merchant tier"
+    as_of: "2026-08"
+    verify: false
+  cycle_days_max:
+    value: 7
+    unit: days
+    source: "varies by gateway and merchant tier"
+    as_of: "2026-08"
+    verify: false
+  form:
+    value: "single lumped NEFT credit per cycle"
+    unit: text
+    source: "Razorpay settlement documentation"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §3.2 Reconciliation
+# ---------------------------------------------------------------------------
+recon:
+  unapplied_cash_tolerance_pct_of_ar:
+    value: 2.5
+    unit: percent
+    range: [2.0, 3.0]
+    source: "AR practice — above this, collection effort degrades outright"
+    as_of: "2026-08"
+    verify: false
+  market_automation_rate_pct:
+    value: 23.0
+    unit: percent
+    source: "Blackline B2B AR benchmarking"
+    as_of: "2026-08"
+    verify: false
+  manual_dso_penalty_pct:
+    value: 30.0
+    unit: percent
+    source: "Blackline B2B AR benchmarking"
+    as_of: "2026-08"
+    verify: false
+  pain_threshold_txn_per_month:
+    value: 900
+    unit: transactions
+    range: [800, 1000]
+    source: "field observation"
+    as_of: "2026-08"
+    verify: false
+  manual_hours_per_month_at_threshold:
+    value: 20
+    unit: hours
+    range: [15, 25]
+    source: "field observation"
+    as_of: "2026-08"
+    verify: false
+  close_delay_threshold_txn_per_month:
+    value: 1000
+    unit: transactions
+    source: "practitioner reference"
+    as_of: "2026-08"
+    verify: false
+  vendor_claimed_match_rate_pct:
+    value: 95.0
+    unit: percent
+    source: "vendor marketing claim — the bar, NOT the truth"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §3.3 Payment failure rates
+# ---------------------------------------------------------------------------
+upi:
+  technical_decline_target_pct:
+    value: 0.8
+    unit: percent
+    source: "NPCI Circular OC-149 (Jun 2022); TD 8-10% (2016) -> ~0.8% (2025)"
+    as_of: "2025"
+    verify: true
+  business_decline_target_pct:
+    value: 5.0
+    unit: percent
+    source: "NPCI Circular OC-149 (Jun 2022) — target < 5%"
+    as_of: "2022-06"
+    verify: true
+
+subscription:
+  debit_failure_rate_pct:
+    value: 12.0
+    unit: percent
+    range: [10.0, 15.0]
+    source: "Indian consumer subscription merchants"
+    as_of: "2026"
+    verify: false
+
+nach:
+  bounce_rate_volume_baseline_pct:
+    value: 31.5
+    unit: percent
+    source: "NPCI retail payment statistics"
+    as_of: "2020-02"
+    verify: true
+  bounce_rate_value_baseline_pct:
+    value: 24.9
+    unit: percent
+    source: "NPCI retail payment statistics"
+    as_of: "2020-02"
+    verify: true
+  bounce_rate_volume_oct2021_pct:
+    value: 31.24
+    unit: percent
+    source: "NPCI — 86.6M presented, 27M failed"
+    as_of: "2021-10"
+    verify: true
+  bounce_rate_volume_peak_pct:
+    value: 45.4
+    unit: percent
+    source: "NPCI — stress scenario"
+    as_of: "2020-06"
+    verify: true
+
+card:
+  failure_rate_pct:
+    value: 15.0
+    unit: percent
+    source: "industry aggregate"
+    as_of: "2026"
+    verify: false
+
+ach_dd:
+  failure_rate_pct:
+    value: 4.0
+    unit: percent
+    range: [3.0, 5.0]
+    source: "industry aggregate"
+    as_of: "2026"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §3.4 Action costs — the bounce fee is the most load-bearing constant in the model.
+# It converts "never retry a revoked mandate" from a vague efficiency claim into rupees.
+# ---------------------------------------------------------------------------
+cost:
+  nach_bounce_fee_inr:
+    value: 425.00
+    unit: INR
+    range: [350.0, 500.0]
+    source: "originating-bank charge"
+    as_of: "2026-08"
+    verify: false
+  sms_inr:
+    value: 0.20
+    unit: INR
+    range: [0.15, 0.25]
+    source: "DLT transactional route"
+    as_of: "2026-08"
+    verify: true
+  whatsapp_utility_inr:
+    value: 0.22
+    unit: INR
+    range: [0.12, 0.35]
+    source: "Meta utility template pricing, India"
+    as_of: "2026-08"
+    verify: true
+  voice_call_inr:
+    value: 5.00
+    unit: INR
+    source: "directional"
+    as_of: "2026-08"
+    verify: false
+  human_agent_inr:
+    value: 90.00
+    unit: INR
+    source: "directional"
+    as_of: "2026-08"
+    verify: false
+  email_inr:
+    value: 0.02
+    unit: INR
+    source: "directional"
+    as_of: "2026-08"
+    verify: false
+  # Weakest parameter in the EV function. Stated as a limitation, §13.5.
+  churn_risk_per_false_contact:
+    value: 0.004
+    unit: probability
+    source: "modelled proxy — NOT measured"
+    as_of: "2026-08"
+    verify: false
+  mean_ltv_inr:
+    value: 4800.00
+    unit: INR
+    source: "modelled proxy"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §3.6 Regulatory — every one of these is a live check, not a one-time lookup.
+# ---------------------------------------------------------------------------
+rbi:
+  pre_debit_notification_hours:
+    value: 24
+    unit: hours
+    source: "RBI e-mandate framework"
+    as_of: "2026-08"
+    verify: true
+  afa_exempt_limit_general_inr:
+    value: 15000
+    unit: INR
+    source: "RBI e-mandate framework"
+    as_of: "2026-08"
+    verify: true
+  afa_exempt_limit_special_inr:
+    value: 100000
+    unit: INR
+    source: "RBI — mutual funds, insurance premia, credit-card bill payments"
+    as_of: "2026-08"
+    verify: true
+  optout_required:
+    value: true
+    unit: bool
+    source: "RBI — pre- and post-transaction notification plus opt-out must persist"
+    as_of: "2026-08"
+    verify: true
+  exempt_categories_no_predebit:
+    value: ["fastag", "ncmc"]
+    unit: list
+    source: "RBI — auto-replenishment, no fixed periodicity"
+    as_of: "2026-08"
+    verify: true
+
+npci:
+  retry_cap_per_cycle:
+    value: 3
+    unit: count
+    source: "NPCI — bounded, not unlimited; PSPs must throttle execution rate"
+    as_of: "2026-08"
+    verify: true
+
+trai:
+  dlt_template_required:
+    value: true
+    unit: bool
+    source: "TRAI TCCCPR"
+    as_of: "2026-08"
+    verify: false
+
+contact:
+  permitted_hours_ist_start:
+    value: "09:00"
+    unit: time
+    source: "conservative default"
+    as_of: "2026-08"
+    verify: false
+  permitted_hours_ist_end:
+    value: "18:00"
+    unit: time
+    source: "conservative default"
+    as_of: "2026-08"
+    verify: false
+  max_contacts_per_payer_per_7d:
+    value: 3
+    unit: count
+    source: "self-imposed, POL-CON-002"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §3.7 MSME receivables (P1)
+# ---------------------------------------------------------------------------
+msme:
+  appointed_day_days:
+    value: 45
+    unit: days
+    source: "MSMED Act — 15 days where there is no written agreement"
+    as_of: "2026-08"
+    verify: false
+  appointed_day_days_no_agreement:
+    value: 15
+    unit: days
+    source: "MSMED Act"
+    as_of: "2026-08"
+    verify: false
+  interest_multiple_of_bank_rate:
+    value: 3
+    unit: multiple
+    source: "MSMED §16 — compounded with monthly rests"
+    as_of: "2026-08"
+    verify: false
+  rbi_bank_rate_pct:
+    value: 5.50
+    unit: percent
+    source: "RBI MPC"
+    as_of: "2026-08"
+    verify: true
+  nominal_rate_pct:
+    value: 16.50
+    unit: percent
+    source: "derived — 3 x bank rate"
+    as_of: "2026-08"
+    verify: false
+  effective_rate_pct:
+    value: 17.81
+    unit: percent
+    source: "derived — (1 + 0.165/12)^12 - 1, monthly rests"
+    as_of: "2026-08"
+    verify: false
+  odr_filing_mandatory_since:
+    value: "2025-10-15"
+    unit: date
+    source: "odr.msme.gov.in"
+    as_of: "2026-08"
+    verify: false
+  filing_fee_inr:
+    value: 0
+    unit: INR
+    source: "MSME Samadhaan — filing is free"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# §6 Match tolerances
+# ---------------------------------------------------------------------------
+match:
+  t1_amount_tolerance_paise:
+    value: 100
+    unit: paise
+    source: "±₹1, INAI_SPEC.md §6.2"
+    as_of: "2026-08"
+    verify: false
+  t2_fuzzy_threshold:
+    value: 82
+    unit: score
+    source: "RapidFuzz token_set_ratio threshold, amount as hard constraint"
+    as_of: "2026-08"
+    verify: false
+  t3_subsetsum_max_invoices:
+    value: 6
+    unit: count
+    source: "INAI_SPEC.md §6.2 — bounded, else escalate to exception"
+    as_of: "2026-08"
+    verify: false
+  t3_subsetsum_max_candidates:
+    value: 200
+    unit: count
+    source: "INAI_SPEC.md §6.2 — hard cap, property-tested"
+    as_of: "2026-08"
+    verify: false
+  settlement_tieout_tolerance_paise:
+    value: 100
+    unit: paise
+    source: "INAI_SPEC.md §6.1 — |residual| <= tolerance is a clean tie-out"
+    as_of: "2026-08"
+    verify: false
+
+# ---------------------------------------------------------------------------
+# LLM boundary — INAI_SPEC.md §8.7. Never on a scoring, matching or policy path.
+# ---------------------------------------------------------------------------
+llm:
+  model:
+    value: "claude-opus-5"
+    unit: model_id
+    source: "Anthropic Claude API"
+    as_of: "2026-08"
+    verify: true
+  effort:
+    value: "low"
+    unit: enum
+    source: "output_config.effort — narration parsing is a constrained-enum task"
+    as_of: "2026-08"
+    verify: false
+  min_confidence:
+    value: 0.7
+    unit: probability
+    source: "INAI_SPEC.md §8.1 — below this -> UNKNOWN -> exception list, never guess"
+    as_of: "2026-08"
+    verify: false

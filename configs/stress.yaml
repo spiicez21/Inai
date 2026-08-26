@@ -1,0 +1,5 @@
+name: stress
+n_records: 25000
+seed: 42
+description: "Throughput claim. Report records/sec WITH the hardware it ran on."
+llm_mode: replay
