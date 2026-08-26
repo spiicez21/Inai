@@ -125,6 +125,10 @@ export interface PolicyBlock {
 }
 
 export interface Scorecard {
+  /** Set whenever any figure on the scorecard is not yet produced by real code.
+   *  A dedicated field, not a magic prefix in `limitations` — a warning that a rename can
+   *  silently switch off is not a warning. */
+  provenance_warning: string | null
   meta: RunMeta
   recon: ReconMetrics
   recovery: RecoveryMetrics

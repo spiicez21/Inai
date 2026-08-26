@@ -85,7 +85,7 @@ export default function App() {
   if (!scorecard) return <Loading />
 
   const { meta, recon, recovery, bridge, exceptions, policy_blocks } = scorecard
-  const placeholder = scorecard.limitations.find((l) => l.startsWith('PLACEHOLDER RUN'))
+  const warning = scorecard.provenance_warning
   const totalExceptions = exceptions.reduce((n, b) => n + b.count, 0)
 
   return (
@@ -107,13 +107,13 @@ export default function App() {
       <main className="min-w-0 flex-1">
         <RunHeader meta={meta} />
 
-        {placeholder ? (
+        {warning ? (
           <div
             className="mb-5 flex items-start gap-2.5 rounded-2xl px-4 py-3.5 text-xs leading-relaxed"
             style={{ background: 'var(--color-exception-soft)', color: 'var(--color-exception)' }}
           >
             <AlertTriangle size={14} className="mt-px shrink-0" />
-            <span>{placeholder}</span>
+            <span>{warning}</span>
           </div>
         ) : null}
 
