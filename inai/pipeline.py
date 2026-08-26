@@ -154,8 +154,19 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
     artifacts.append_audit([{"event": "run_complete", "run_id": run_id, "ts": finished}])
 
     _load_exceptions_to_store(store, run_id, exception_rows)
+    # The dashboard reads this Parquet directly through DuckDB-Wasm, so it gets a flat,
+    # display-ready projection: the ref LISTS collapse to their primary element for the
+    # table columns, while the full lists stay for the drill-down.
     store.export_parquet(
-        f"(SELECT * FROM exceptions WHERE run_id = '{run_id}')", out / "exceptions.parquet"
+        f"""(
+            SELECT exception_id, cls, tier, ledger_ref,
+                   settlement_refs[1] AS settlement_ref,
+                   bank_refs[1]       AS bank_ref,
+                   settlement_refs, bank_refs,
+                   amount_paise, machine_reason, human_reason, routed_action
+            FROM exceptions WHERE run_id = '{run_id}'
+        )""",
+        out / "exceptions.parquet",
     )
     store.execute("UPDATE runs SET finished_at = ? WHERE run_id = ?", [finished, run_id])
     store.close()
@@ -446,13 +457,14 @@ def _placeholder_policy_blocks(cfg: ResolvedConfig, rng: np.random.Generator) ->
 def _load_exceptions_to_store(store: Store, run_id: str, rows: list[dict[str, Any]]) -> None:
     for r in rows:
         store.execute(
-            "INSERT INTO exceptions (run_id, exception_id, cls, ledger_ref, settlement_refs, "
-            "bank_refs, amount_paise, machine_reason, human_reason, routed_action) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO exceptions (run_id, exception_id, cls, tier, ledger_ref, "
+            "settlement_refs, bank_refs, amount_paise, machine_reason, human_reason, "
+            "routed_action) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [
                 run_id,
                 r["exception_id"],
                 r["cls"],
+                r["tier"],
                 r["ledger_ref"],
                 [r["settlement_ref"]],
                 [r["bank_ref"]],

@@ -3,63 +3,144 @@
 /* ===========================================================================
    INAI design tokens — Tailwind v4, CSS-first. No tailwind.config.js.
 
-   Dark-first, dense, monospace numerics. Neutral base, ONE accent.
-   Semantics carry all remaining colour, and each one means exactly one thing:
+   Two themes. `@theme` holds the LIGHT values (and so defines the utility
+   names); `:root[data-theme='dark']` re-points the same variables at runtime.
+   Every utility compiles to `var(--color-…)`, so the swap costs one attribute
+   change and no re-render.
 
-     matched   green   the money tied out
-     exception amber   an honest gap, displayed not hidden
-     blocked   red     a policy rule fired and stopped us
-     suppressed grey   deliberately no action — still a decision
+   Green carries the identity. Semantics stay distinct from it, because this is
+   an audit tool and a reader must be able to tell "matched" from "blocked"
+   without reading the label:
 
-   Tier badges T0->T4 ride a single-hue ramp so "harder = darker" reads
-   without a legend.
+     matched    green    the money tied out
+     exception  amber    an honest gap, displayed not hidden
+     blocked    red      a policy rule fired and stopped us
+     suppressed grey     deliberately no action — still a decision
+
+   Tier badges T0→T4 ride a single green-to-deep ramp so "harder = darker"
+   reads without a legend.
    =========================================================================== */
-@theme {
+/*
+ * `static` is load-bearing, not decorative.
+ *
+ * By default Tailwind v4 tree-shakes theme variables it does not see referenced by a
+ * utility class. Many tokens here are consumed only from JS — inline `style` props, and
+ * Observable Plot mark colours read through `token()` — which the CSS scanner cannot see.
+ * Without `static` those variables are dropped from the output and every consumer silently
+ * resolves to transparent. That is exactly how the tier ramp went missing in light mode
+ * while still working in dark (the dark overrides live in a plain `:root` block, which is
+ * never shaken).
+ */
+@theme static {
   --font-sans:
     'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono:
     'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
-  /* Base — zinc, cool, low-chroma */
-  --color-base-950: oklch(0.145 0.005 285);
-  --color-base-925: oklch(0.17 0.005 285);
-  --color-base-900: oklch(0.196 0.006 286);
-  --color-base-850: oklch(0.23 0.006 286);
-  --color-base-800: oklch(0.274 0.006 286);
-  --color-base-700: oklch(0.37 0.008 286);
-  --color-base-600: oklch(0.442 0.011 286);
-  --color-base-500: oklch(0.552 0.014 286);
-  --color-base-400: oklch(0.705 0.015 286);
-  --color-base-300: oklch(0.82 0.012 286);
-  --color-base-100: oklch(0.945 0.006 286);
-  --color-base-50: oklch(0.985 0.002 286);
+  /* --- Surfaces (light) --- */
+  --color-canvas: oklch(0.94 0.002 260);
+  --color-card: oklch(1 0 0);
+  --color-card-2: oklch(0.975 0.002 260);
+  --color-inset: oklch(0.955 0.003 260);
+  --color-border: oklch(0.905 0.004 260);
+  --color-border-soft: oklch(0.94 0.003 260);
 
-  /* The one accent. Used for focus, the active nav item, and nothing decorative. */
-  --color-accent: oklch(0.72 0.16 248);
-  --color-accent-dim: oklch(0.52 0.13 248);
-  --color-accent-bg: oklch(0.28 0.06 248);
+  /* --- Text (light) --- */
+  --color-fg: oklch(0.22 0.008 260);
+  --color-fg-strong: oklch(0.15 0.01 260);
+  --color-fg-muted: oklch(0.52 0.008 260);
+  --color-fg-subtle: oklch(0.66 0.006 260);
+  --color-fg-faint: oklch(0.78 0.005 260);
 
-  /* Semantics */
-  --color-matched: oklch(0.75 0.16 152);
-  --color-matched-bg: oklch(0.28 0.06 152);
-  --color-exception: oklch(0.79 0.15 78);
-  --color-exception-bg: oklch(0.3 0.06 78);
-  --color-blocked: oklch(0.68 0.19 22);
-  --color-blocked-bg: oklch(0.29 0.08 22);
-  --color-suppressed: oklch(0.62 0.01 286);
+  /* --- Brand: deep green + lime, the two-tone from the reference --- */
+  --color-accent: oklch(0.46 0.1 163);
+  --color-accent-strong: oklch(0.38 0.09 163);
+  --color-accent-soft: oklch(0.94 0.04 163);
+  --color-accent-fg: oklch(0.32 0.08 163);
+  --color-lime: oklch(0.82 0.2 128);
+  --color-lime-soft: oklch(0.95 0.08 128);
+  --color-lime-fg: oklch(0.45 0.14 128);
 
-  /* Difficulty ramp. T0 pale = easy and meaningless; T4 deep = where we lose. */
-  --color-tier-0: oklch(0.85 0.05 248);
-  --color-tier-1: oklch(0.74 0.09 248);
-  --color-tier-2: oklch(0.63 0.13 248);
-  --color-tier-3: oklch(0.52 0.15 262);
-  --color-tier-4: oklch(0.44 0.17 288);
+  /* Ink for text sitting ON a filled accent/lime tile.
+     These do NOT flip with the theme: the tile backgrounds are brand colours that stay put,
+     so their contrast partner must stay put too. Flipping them turns the lime tile into
+     light-on-light and the text disappears. */
+  --color-on-accent: oklch(1 0 0);
+  --color-on-lime: oklch(0.3 0.08 150);
 
-  --radius-card: 0.625rem;
+  /* --- Semantics --- */
+  --color-matched: oklch(0.52 0.12 163);
+  --color-matched-soft: oklch(0.94 0.045 163);
+  --color-exception: oklch(0.62 0.14 72);
+  --color-exception-soft: oklch(0.96 0.05 82);
+  --color-blocked: oklch(0.56 0.19 25);
+  --color-blocked-soft: oklch(0.95 0.04 25);
+  --color-suppressed: oklch(0.62 0.006 260);
+
+  /* --- Difficulty ramp: T0 pale (easy, meaningless) → T4 deep (where we lose) --- */
+  --color-tier-0: oklch(0.86 0.13 128);
+  --color-tier-1: oklch(0.75 0.15 145);
+  --color-tier-2: oklch(0.62 0.13 160);
+  --color-tier-3: oklch(0.5 0.11 168);
+  --color-tier-4: oklch(0.38 0.08 175);
+
+  --radius-card: 1.25rem;
+  --radius-tile: 0.875rem;
+
+  --shadow-card: 0 1px 2px oklch(0.2 0.01 260 / 0.04), 0 8px 24px oklch(0.2 0.01 260 / 0.05);
+  --shadow-pop: 0 8px 32px oklch(0.2 0.01 260 / 0.14);
+}
+
+/* --- Dark: same variables, re-pointed. --------------------------------- */
+:root[data-theme='dark'] {
+  --color-canvas: oklch(0.155 0.006 260);
+  --color-card: oklch(0.205 0.007 260);
+  --color-card-2: oklch(0.235 0.008 260);
+  --color-inset: oklch(0.255 0.008 260);
+  --color-border: oklch(0.29 0.008 260);
+  --color-border-soft: oklch(0.25 0.008 260);
+
+  --color-fg: oklch(0.93 0.004 260);
+  --color-fg-strong: oklch(0.985 0.002 260);
+  --color-fg-muted: oklch(0.7 0.008 260);
+  --color-fg-subtle: oklch(0.56 0.008 260);
+  --color-fg-faint: oklch(0.42 0.008 260);
+
+  --color-accent: oklch(0.72 0.14 163);
+  --color-accent-strong: oklch(0.8 0.15 163);
+  --color-accent-soft: oklch(0.3 0.06 163);
+  --color-accent-fg: oklch(0.82 0.13 163);
+  --color-lime: oklch(0.85 0.21 128);
+  --color-lime-soft: oklch(0.32 0.08 128);
+  --color-lime-fg: oklch(0.88 0.19 128);
+  /* Accent is light in dark mode, so its ink flips to dark. Lime is light in BOTH
+     themes, so its ink does not move. */
+  --color-on-accent: oklch(0.17 0.03 163);
+  --color-on-lime: oklch(0.28 0.08 150);
+
+  --color-matched: oklch(0.78 0.16 158);
+  --color-matched-soft: oklch(0.3 0.06 158);
+  --color-exception: oklch(0.82 0.15 78);
+  --color-exception-soft: oklch(0.32 0.06 78);
+  --color-blocked: oklch(0.7 0.18 24);
+  --color-blocked-soft: oklch(0.31 0.08 24);
+  --color-suppressed: oklch(0.6 0.008 260);
+
+  --color-tier-0: oklch(0.88 0.14 128);
+  --color-tier-1: oklch(0.82 0.16 142);
+  --color-tier-2: oklch(0.74 0.14 158);
+  --color-tier-3: oklch(0.63 0.12 168);
+  --color-tier-4: oklch(0.53 0.09 176);
+
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.28);
+  --shadow-pop: 0 8px 32px oklch(0 0 0 / 0.5);
 }
 
 @layer base {
   :root {
+    color-scheme: light;
+  }
+  :root[data-theme='dark'] {
     color-scheme: dark;
   }
 
@@ -68,8 +149,13 @@
   }
 
   body {
-    @apply bg-base-950 text-base-100 font-sans antialiased;
+    background-color: var(--color-canvas);
+    color: var(--color-fg);
+    @apply font-sans antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    transition:
+      background-color 0.18s ease,
+      color 0.18s ease;
   }
 
   /* Money and counts MUST use tabular figures. Proportional digits make columns of
@@ -84,20 +170,19 @@
   }
 
   ::selection {
-    background: var(--color-accent-bg);
+    background: var(--color-accent-soft);
   }
 
-  /* Dense scrollbars — this is a data tool, not a marketing page. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--color-base-700) transparent;
+    scrollbar-color: var(--color-border) transparent;
   }
   *::-webkit-scrollbar {
     width: 9px;
     height: 9px;
   }
   *::-webkit-scrollbar-thumb {
-    background: var(--color-base-700);
+    background: var(--color-border);
     border-radius: 999px;
   }
   *::-webkit-scrollbar-track {
@@ -112,15 +197,30 @@
 
 @layer components {
   .card {
-    @apply bg-base-900 border-base-800 rounded-[--radius-card] border;
+    background-color: var(--color-card);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
   }
 
   .hairline {
-    @apply border-base-800 border-t;
+    border-top: 1px solid var(--color-border-soft);
   }
 
-  /* Small-caps section label. Used once per panel, never twice. */
+  /* Small-caps section label. Once per panel, never twice. */
   .eyebrow {
-    @apply text-base-500 text-[0.6875rem] font-medium tracking-[0.08em] uppercase;
+    color: var(--color-fg-subtle);
+    @apply text-[0.6875rem] font-medium tracking-[0.06em] uppercase;
+  }
+
+  /* The reference's signature: a big figure whose decimals recede, so the eye
+     lands on the magnitude first. */
+  .figure {
+    @apply font-semibold tracking-tight;
+    color: var(--color-fg-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .figure-dec {
+    color: var(--color-fg-subtle);
+    font-weight: 500;
   }
 }

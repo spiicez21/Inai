@@ -96,3 +96,18 @@ export async function queryClassByTier(): Promise<ClassTierCell[]> {
      FROM exceptions GROUP BY cls, tier ORDER BY cls, tier`,
   )
 }
+
+export interface TierBucket {
+  tier: string
+  n: number
+  amount_paise: number
+}
+
+/** Exception count and value per difficulty tier — powers the distribution strip. */
+export async function queryByTier(f: ExceptionFilter = {}): Promise<TierBucket[]> {
+  return query<TierBucket>(
+    `SELECT tier, count(*)::BIGINT AS n, sum(amount_paise)::BIGINT AS amount_paise
+     FROM exceptions ${whereClause({ cls: f.cls, search: f.search })}
+     GROUP BY tier ORDER BY tier`,
+  )
+}

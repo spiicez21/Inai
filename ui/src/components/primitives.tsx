@@ -26,71 +26,130 @@ export function PanelHeader({
   right?: ReactNode
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 px-4 pt-3.5 pb-3">
+    <div className="flex items-start justify-between gap-4 px-5 pt-4 pb-3">
       <div className="min-w-0">
-        <h2 className="text-base-100 text-[0.9375rem] leading-tight font-medium">{title}</h2>
-        {note ? <p className="text-base-500 mt-1 text-xs leading-relaxed">{note}</p> : null}
+        <h2
+          className="text-[0.9375rem] leading-tight font-semibold"
+          style={{ color: 'var(--color-fg-strong)' }}
+        >
+          {title}
+        </h2>
+        {note ? (
+          <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--color-fg-subtle)' }}>
+            {note}
+          </p>
+        ) : null}
       </div>
       {right ? <div className="shrink-0">{right}</div> : null}
     </div>
   )
 }
 
-const TIER_CLASS: Record<MatchTierId, string> = {
-  t0_exact: 'bg-tier-0/15 text-tier-0 ring-tier-0/25',
-  t1_deterministic: 'bg-tier-1/15 text-tier-1 ring-tier-1/25',
-  t2_fuzzy: 'bg-tier-2/20 text-tier-2 ring-tier-2/30',
-  t3_structural: 'bg-tier-3/25 text-tier-3 ring-tier-3/35',
-  t4_adversarial: 'bg-tier-4/30 text-tier-4 ring-tier-4/40',
+const TIER_VAR: Record<MatchTierId, string> = {
+  t0_exact: 'tier-0',
+  t1_deterministic: 'tier-1',
+  t2_fuzzy: 'tier-2',
+  t3_structural: 'tier-3',
+  t4_adversarial: 'tier-4',
 }
 
 /** Single-hue ramp, so "further down the alphabet = harder" reads without a legend. */
 export function TierBadge({ tier, className }: { tier: MatchTierId; className?: string }) {
+  const v = TIER_VAR[tier]
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[0.6875rem] font-medium ring-1 ring-inset',
-        TIER_CLASS[tier],
+        'num inline-flex items-center rounded-md px-1.5 py-0.5 text-[0.6875rem] font-medium',
         className,
       )}
+      style={{
+        background: `color-mix(in oklab, var(--color-${v}) 22%, transparent)`,
+        // Only 55% of the tier hue: the pale end of the ramp (T0/T1) is a light green, and
+        // at 80% the label washed out against its own tint. The ramp still reads because
+        // the background tint carries it.
+        color: `color-mix(in oklab, var(--color-${v}) 55%, var(--color-fg-strong))`,
+      }}
     >
       {TIER_SHORT[tier]}
     </span>
   )
 }
 
-type Tone = 'matched' | 'exception' | 'blocked' | 'suppressed' | 'accent' | 'neutral'
+type Tone = 'matched' | 'exception' | 'blocked' | 'suppressed' | 'accent' | 'lime' | 'neutral'
 
-const TONE_CLASS: Record<Tone, string> = {
-  matched: 'bg-matched/12 text-matched ring-matched/25',
-  exception: 'bg-exception/12 text-exception ring-exception/25',
-  blocked: 'bg-blocked/12 text-blocked ring-blocked/25',
-  suppressed: 'bg-base-800 text-suppressed ring-base-700',
-  accent: 'bg-accent/12 text-accent ring-accent/25',
-  neutral: 'bg-base-800 text-base-300 ring-base-700',
+const TONE_BG: Record<Tone, string> = {
+  matched: 'var(--color-matched-soft)',
+  exception: 'var(--color-exception-soft)',
+  blocked: 'var(--color-blocked-soft)',
+  suppressed: 'var(--color-inset)',
+  accent: 'var(--color-accent-soft)',
+  lime: 'var(--color-lime-soft)',
+  neutral: 'var(--color-inset)',
 }
 
+const TONE_FG: Record<Tone, string> = {
+  matched: 'var(--color-matched)',
+  exception: 'var(--color-exception)',
+  blocked: 'var(--color-blocked)',
+  suppressed: 'var(--color-suppressed)',
+  accent: 'var(--color-accent-fg)',
+  lime: 'var(--color-lime-fg)',
+  neutral: 'var(--color-fg-muted)',
+}
+
+/** The reference's pill: soft tinted background, icon optional, tight. */
 export function Badge({
   tone = 'neutral',
   children,
   className,
   title,
+  icon,
 }: {
   tone?: Tone
   children: ReactNode
   className?: string
   title?: string
+  icon?: ReactNode
 }) {
   return (
     <span
       title={title}
       className={cn(
-        'inline-flex items-center rounded px-1.5 py-0.5 text-[0.6875rem] font-medium ring-1 ring-inset',
-        TONE_CLASS[tone],
+        'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[0.6875rem] font-medium',
         className,
       )}
+      style={{ background: TONE_BG[tone], color: TONE_FG[tone] }}
     >
+      {icon}
       {children}
+    </span>
+  )
+}
+
+/**
+ * A big figure with receding decimals — the reference's signature treatment. The eye lands
+ * on the magnitude, and the paise are still there for anyone checking the arithmetic.
+ */
+export function Figure({
+  value,
+  className,
+  tone,
+}: {
+  value: string
+  className?: string
+  tone?: string
+}) {
+  const m = value.match(/^(.*?)([.,]\d{2})$/)
+  return (
+    <span className={cn('figure', className)} style={tone ? { color: tone } : undefined}>
+      {m ? (
+        <>
+          {m[1]}
+          <span className="figure-dec text-[0.62em]">{m[2]}</span>
+        </>
+      ) : (
+        value
+      )}
     </span>
   )
 }
@@ -109,29 +168,22 @@ export function Stat({
   tone?: Tone
   mono?: boolean
 }) {
-  const valueTone =
-    tone === 'matched'
-      ? 'text-matched'
-      : tone === 'exception'
-        ? 'text-exception'
-        : tone === 'blocked'
-          ? 'text-blocked'
-          : tone === 'accent'
-            ? 'text-accent'
-            : 'text-base-50'
+  const color =
+    tone === 'neutral' || tone === 'suppressed' ? 'var(--color-fg-strong)' : TONE_FG[tone]
   return (
-    <div className="flex min-w-0 flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <span className="eyebrow truncate">{label}</span>
       <span
-        className={cn(
-          'text-[1.375rem] leading-none font-semibold',
-          mono && 'num tracking-tight',
-          valueTone,
-        )}
+        className={cn('text-[1.5rem] leading-none font-semibold', mono && 'tracking-tight')}
+        style={{ color, fontVariantNumeric: 'tabular-nums' }}
       >
         {value}
       </span>
-      {sub ? <span className="text-base-500 text-xs leading-snug">{sub}</span> : null}
+      {sub ? (
+        <span className="text-xs leading-snug" style={{ color: 'var(--color-fg-subtle)' }}>
+          {sub}
+        </span>
+      ) : null}
     </div>
   )
 }
@@ -147,26 +199,25 @@ export function Meter({
   target?: [number, number]
   tone?: Tone
 }) {
-  const barTone =
-    tone === 'matched'
-      ? 'bg-matched'
-      : tone === 'exception'
-        ? 'bg-exception'
-        : tone === 'blocked'
-          ? 'bg-blocked'
-          : 'bg-accent'
   return (
-    <div className="bg-base-850 relative h-1.5 w-full overflow-hidden rounded-full">
+    <div
+      className="relative h-2 w-full overflow-hidden rounded-full"
+      style={{ background: 'var(--color-inset)' }}
+    >
       {target ? (
         <div
-          className="bg-base-700/70 absolute inset-y-0"
-          style={{ left: `${target[0]}%`, width: `${Math.max(target[1] - target[0], 0.5)}%` }}
+          className="absolute inset-y-0"
+          style={{
+            left: `${target[0]}%`,
+            width: `${Math.max(target[1] - target[0], 0.5)}%`,
+            background: 'var(--color-border)',
+          }}
           title={`target ${target[0]}–${target[1]}%`}
         />
       ) : null}
       <div
-        className={cn('absolute inset-y-0 left-0 rounded-full', barTone)}
-        style={{ width: `${Math.min(Math.max(value, 0), 100)}%` }}
+        className="absolute inset-y-0 left-0 rounded-full"
+        style={{ width: `${Math.min(Math.max(value, 0), 100)}%`, background: TONE_FG[tone] }}
       />
     </div>
   )
@@ -174,7 +225,10 @@ export function Meter({
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="text-base-500 flex h-full min-h-32 items-center justify-center px-6 py-10 text-center text-sm">
+    <div
+      className="flex h-full min-h-32 items-center justify-center px-6 py-10 text-center text-sm"
+      style={{ color: 'var(--color-fg-subtle)' }}
+    >
       {children}
     </div>
   )

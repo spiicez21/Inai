@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS exceptions (
     run_id           VARCHAR NOT NULL,
     exception_id     VARCHAR NOT NULL,
     cls              VARCHAR NOT NULL,
+    -- Difficulty tier of the record that produced this exception. Carried here so the
+    -- exception list can be read by tier without re-joining match_results — the class x
+    -- tier cross-tab is where the interesting structure lives (DATA.md §5.2).
+    tier             VARCHAR NOT NULL,
     ledger_ref       VARCHAR,
     settlement_refs  VARCHAR[] NOT NULL,
     bank_refs        VARCHAR[] NOT NULL,

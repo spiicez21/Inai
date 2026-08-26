@@ -46,49 +46,66 @@ export function ExceptionTable({
 }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'amount_paise', desc: true }])
 
+  // The panel runs full width now, so the columns a reader needs to actually trace a
+  // record are back: the settlement ref (the join key into the bank statement) and the
+  // machine reason. The exception id and bank ref stay in the drawer — they identify a row
+  // you have already found rather than helping you find it.
   const columns = useMemo(
     () => [
-      col.accessor('exception_id', {
-        header: 'ID',
-        size: 108,
-        cell: (c) => <span className="num text-base-500 text-[0.6875rem]">{c.getValue()}</span>,
-      }),
       col.accessor('cls', {
         header: 'Class',
-        size: 190,
+        size: 180,
         cell: (c) => (
-          <span className="text-base-200 truncate" title={EXCEPTION_REALITY[c.getValue()]}>
+          <span
+            className="block truncate font-medium"
+            style={{ color: 'var(--color-fg)' }}
+            title={EXCEPTION_REALITY[c.getValue()]}
+          >
             {EXCEPTION_LABEL[c.getValue()] ?? c.getValue()}
           </span>
         ),
       }),
       col.accessor('tier', {
         header: 'Tier',
-        size: 62,
+        size: 64,
         cell: (c) => <TierBadge tier={c.getValue() as MatchTierId} />,
       }),
       col.accessor('amount_paise', {
         header: 'Amount',
-        size: 128,
+        size: 132,
         cell: (c) => (
-          <span className="num text-base-100 block text-right">{fmtPaise(c.getValue())}</span>
+          <span
+            className="num block text-right font-medium"
+            style={{ color: 'var(--color-fg-strong)' }}
+          >
+            {fmtPaise(c.getValue())}
+          </span>
         ),
       }),
       col.accessor('ledger_ref', {
         header: 'Ledger',
-        size: 108,
-        cell: (c) => <span className="num text-base-400 text-[0.6875rem]">{c.getValue()}</span>,
+        size: 116,
+        cell: (c) => (
+          <span className="num text-[0.6875rem]" style={{ color: 'var(--color-fg-subtle)' }}>
+            {c.getValue()}
+          </span>
+        ),
       }),
       col.accessor('settlement_ref', {
         header: 'Settlement',
-        size: 148,
+        size: 156,
         cell: (c) => (
-          <span className="num text-base-400 truncate text-[0.6875rem]">{c.getValue()}</span>
+          <span
+            className="num block truncate text-[0.6875rem]"
+            style={{ color: 'var(--color-fg-subtle)' }}
+          >
+            {c.getValue()}
+          </span>
         ),
       }),
       col.accessor('routed_action', {
         header: 'Routed to',
-        size: 156,
+        size: 162,
         cell: (c) => (
           <Badge tone={ACTION_TONE[c.getValue()] ?? 'neutral'}>
             {c.getValue().replaceAll('_', ' ')}
@@ -96,10 +113,15 @@ export function ExceptionTable({
         ),
       }),
       col.accessor('machine_reason', {
-        header: 'Reason',
-        size: 240,
+        header: 'Machine reason',
+        size: 230,
         cell: (c) => (
-          <span className="text-base-500 truncate text-[0.6875rem]">{c.getValue()}</span>
+          <span
+            className="block truncate text-[0.6875rem]"
+            style={{ color: 'var(--color-fg-faint)' }}
+          >
+            {c.getValue()}
+          </span>
         ),
       }),
     ],
@@ -121,45 +143,50 @@ export function ExceptionTable({
   const virtualizer = useVirtualizer({
     count: modelRows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 34,
+    estimateSize: () => 40,
     overscan: 12,
   })
 
   const items = virtualizer.getVirtualItems()
   const paddingTop = items.length ? items[0].start : 0
-  const paddingBottom = items.length
-    ? virtualizer.getTotalSize() - items[items.length - 1].end
-    : 0
+  const paddingBottom = items.length ? virtualizer.getTotalSize() - items[items.length - 1].end : 0
 
   if (rows.length === 0) {
     return <Empty>No exceptions match this filter.</Empty>
   }
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
+    <div className="flex h-full min-h-0 flex-col">
+      <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+        style={{ scrollbarGutter: 'stable' }}>
         <table className="w-full table-fixed border-collapse text-sm">
-          <thead className="bg-base-900 sticky top-0 z-10">
+          {/* The sticky header needs an opaque background AND a shadow. With only a border,
+              a row scrolled half-under it reads as a rendering fault rather than as content
+              passing beneath a fixed header. */}
+          <thead
+            className="sticky top-0 z-20"
+            style={{
+              background: 'var(--color-card)',
+              boxShadow: '0 1px 0 var(--color-border), 0 6px 10px -8px rgb(0 0 0 / 0.35)',
+            }}
+          >
             {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-base-800 border-b">
+              <tr key={hg.id} className="border-b" style={{ borderColor: 'var(--color-border)' }}>
                 {hg.headers.map((h) => {
                   const sorted = h.column.getIsSorted()
                   const numeric = h.column.id === 'amount_paise'
                   return (
                     <th
                       key={h.id}
-                      style={{ width: h.getSize() }}
+                      style={{ width: h.getSize(), color: 'var(--color-fg-subtle)' }}
                       onClick={h.column.getToggleSortingHandler()}
                       className={cn(
-                        'text-base-500 hover:text-base-300 cursor-pointer px-2.5 py-2 text-[0.6875rem] font-medium tracking-wide uppercase select-none',
+                        'cursor-pointer px-3 py-2.5 text-[0.6875rem] font-medium tracking-wide uppercase select-none',
                         numeric ? 'text-right' : 'text-left',
                       )}
                     >
                       <span
-                        className={cn(
-                          'inline-flex items-center gap-1',
-                          numeric && 'flex-row-reverse',
-                        )}
+                        className={cn('inline-flex items-center gap-1', numeric && 'flex-row-reverse')}
                       >
                         {flexRender(h.column.columnDef.header, h.getContext())}
                         {sorted === 'asc' ? (
@@ -187,13 +214,20 @@ export function ExceptionTable({
                 <tr
                   key={row.id}
                   onClick={() => onSelect(row.original)}
-                  className={cn(
-                    'border-base-850/60 hover:bg-base-850/60 cursor-pointer border-b',
-                    selected && 'bg-accent-bg/40 hover:bg-accent-bg/50',
-                  )}
+                  className="cursor-pointer border-b transition-colors"
+                  style={{
+                    borderColor: 'var(--color-border-soft)',
+                    background: selected ? 'var(--color-accent-soft)' : undefined,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!selected) e.currentTarget.style.background = 'var(--color-inset)'
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!selected) e.currentTarget.style.background = ''
+                  }}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="overflow-hidden px-2.5 py-1.5 whitespace-nowrap">
+                    <td key={cell.id} className="overflow-hidden px-3 py-2 whitespace-nowrap">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -209,13 +243,22 @@ export function ExceptionTable({
         </table>
       </div>
 
-      <div className="hairline text-base-500 flex items-center justify-between px-4 py-2 text-[0.6875rem]">
+      <div
+        className="hairline flex items-center justify-between px-5 py-2.5 text-[0.6875rem]"
+        style={{ color: 'var(--color-fg-subtle)' }}
+      >
         <span>
-          <span className="num text-base-300">{fmtCount(rows.length)}</span> shown
+          <span className="num font-medium" style={{ color: 'var(--color-fg)' }}>
+            {fmtCount(rows.length)}
+          </span>{' '}
+          shown
           {rows.length !== totalCount ? (
             <>
               {' '}
-              of <span className="num text-base-300">{fmtCount(totalCount)}</span>
+              of{' '}
+              <span className="num" style={{ color: 'var(--color-fg-muted)' }}>
+                {fmtCount(totalCount)}
+              </span>
             </>
           ) : null}
         </span>

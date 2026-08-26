@@ -1,7 +1,8 @@
 import { fmtCount, fmtDuration, fmtThroughput } from '@/lib/format'
 import type { RunMeta } from '@/types/scorecard'
-import { Copy, Check } from 'lucide-react'
+import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
+import { Badge } from './primitives'
 
 /**
  * Seed and config hash, on the face of the scorecard. INAI_SPEC.md §12 step 8:
@@ -10,7 +11,6 @@ import { useState } from 'react'
  */
 export function RunHeader({ meta }: { meta: RunMeta }) {
   const [copied, setCopied] = useState(false)
-
   const command = `uv run inai run --config configs/${meta.config_name}.yaml --seed ${meta.seed}`
 
   async function copy() {
@@ -20,48 +20,43 @@ export function RunHeader({ meta }: { meta: RunMeta }) {
   }
 
   return (
-    <header className="border-base-800 bg-base-950/85 sticky top-0 z-30 border-b backdrop-blur">
-      <div className="mx-auto flex max-w-[110rem] flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
-        <div className="flex items-baseline gap-2.5">
-          <span className="text-base-50 text-base font-semibold tracking-tight">INAI</span>
-          <span className="text-base-600 text-sm">இணை</span>
-          <span className="text-base-500 hidden text-xs sm:inline">Match first. Then chase.</span>
-        </div>
-
-        <div className="ml-auto flex flex-wrap items-center gap-x-5 gap-y-1 text-[0.6875rem]">
-          <Meta label="config" value={meta.config_name} />
-          <Meta label="seed" value={String(meta.seed)} />
-          <Meta label="records" value={fmtCount(meta.n_records)} />
-          <Meta
-            label="throughput"
-            value={fmtThroughput(meta.records_per_second)}
-            title={`${fmtDuration(meta.duration_seconds)} on ${meta.hardware}`}
-          />
-          <Meta label="llm" value={meta.llm_mode} />
-          <button
-            onClick={copy}
-            title={`Copy: ${command}`}
-            className="text-base-500 hover:text-base-200 hover:bg-base-850 group flex items-center gap-1.5 rounded px-1.5 py-1"
-          >
-            <span className="text-base-600">config_hash</span>
-            <span className="num text-base-300">{meta.config_hash.slice(0, 12)}</span>
-            {copied ? (
-              <Check size={11} className="text-matched" />
-            ) : (
-              <Copy size={11} className="opacity-50 group-hover:opacity-100" />
-            )}
-          </button>
-        </div>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <h1
+          className="text-[1.375rem] leading-tight font-semibold tracking-tight"
+          style={{ color: 'var(--color-fg-strong)' }}
+        >
+          Scorecard
+        </h1>
+        <p className="mt-1 text-xs" style={{ color: 'var(--color-fg-subtle)' }}>
+          Match first. Then chase. · {fmtCount(meta.n_records)} records ·{' '}
+          {fmtDuration(meta.duration_seconds)}
+        </p>
       </div>
-    </header>
-  )
-}
 
-function Meta({ label, value, title }: { label: string; value: string; title?: string }) {
-  return (
-    <span className="flex items-center gap-1.5" title={title}>
-      <span className="text-base-600">{label}</span>
-      <span className="num text-base-300">{value}</span>
-    </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="neutral">config {meta.config_name}</Badge>
+        <Badge tone="neutral">seed {meta.seed}</Badge>
+        <Badge tone="lime" title={meta.hardware}>
+          {fmtThroughput(meta.records_per_second)}
+        </Badge>
+        <Badge tone={meta.llm_mode === 'replay' ? 'accent' : 'exception'}>
+          llm {meta.llm_mode}
+        </Badge>
+        <button
+          onClick={copy}
+          title={`Copy: ${command}`}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.6875rem] font-medium transition-colors"
+          style={{ background: 'var(--color-inset)', color: 'var(--color-fg-muted)' }}
+        >
+          <span className="num">{meta.config_hash.slice(0, 12)}</span>
+          {copied ? (
+            <Check size={11} style={{ color: 'var(--color-matched)' }} />
+          ) : (
+            <Copy size={11} className="opacity-60" />
+          )}
+        </button>
+      </div>
+    </div>
   )
 }

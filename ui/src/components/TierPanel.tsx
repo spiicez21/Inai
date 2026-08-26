@@ -17,16 +17,23 @@ export function TierPanel({ recon }: { recon: ReconMetrics }) {
         note="Never blended. Vendors publish one number dominated by exact-reference matches that were never hard."
         right={
           <div className="text-right">
-            <div className="num text-base-300 text-sm">{fmtPct(recon.auto_match_rate_pct)}</div>
-            <div className="text-base-500 text-[0.6875rem]">auto-match (T0–T2)</div>
+            <div className="num text-sm font-medium" style={{ color: 'var(--color-fg-strong)' }}>
+              {fmtPct(recon.auto_match_rate_pct)}
+            </div>
+            <div className="text-[0.6875rem]" style={{ color: 'var(--color-fg-subtle)' }}>
+              auto-match (T0–T2)
+            </div>
           </div>
         }
       />
       <div className="hairline">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-base-500 border-base-800 border-b text-[0.6875rem] tracking-wide uppercase">
-              <th className="py-2 pr-2 pl-4 text-left font-medium">Tier</th>
+            <tr
+              className="text-[0.6875rem] tracking-wide uppercase"
+              style={{ color: 'var(--color-fg-subtle)' }}
+            >
+              <th className="py-2 pr-2 pl-5 text-left font-medium">Tier</th>
               <th className="px-2 py-2 text-right font-medium" data-num>
                 Eligible
               </th>
@@ -37,32 +44,44 @@ export function TierPanel({ recon }: { recon: ReconMetrics }) {
                 Rate
               </th>
               <th className="w-[26%] px-3 py-2 text-left font-medium">vs target</th>
-              <th className="py-2 pr-4 pl-2 text-left font-medium">What it proves</th>
+              <th className="py-2 pr-5 pl-2 text-left font-medium">What it proves</th>
             </tr>
           </thead>
           <tbody>
             {recon.tiers.map((t) => {
               const below = t.match_rate_pct < t.target_pct_low
               return (
-                <tr key={t.tier} className="border-base-850 border-b last:border-0">
-                  <td className="py-2.5 pr-2 pl-4">
+                <tr
+                  key={t.tier}
+                  className="border-t"
+                  style={{ borderColor: 'var(--color-border-soft)' }}
+                >
+                  <td className="py-2.5 pr-2 pl-5">
                     <div className="flex items-center gap-2">
                       <TierBadge tier={t.tier} />
-                      <span className="text-base-300 hidden text-xs sm:inline">
+                      <span
+                        className="hidden text-xs sm:inline"
+                        style={{ color: 'var(--color-fg-muted)' }}
+                      >
                         {TIER_LABEL[t.tier].split(' · ')[1]}
                       </span>
                     </div>
                   </td>
-                  <td className="num text-base-400 px-2 py-2.5 text-right text-xs">
+                  <td
+                    className="num px-2 py-2.5 text-right text-xs"
+                    style={{ color: 'var(--color-fg-subtle)' }}
+                  >
                     {fmtCount(t.eligible)}
                   </td>
-                  <td className="num text-base-200 px-2 py-2.5 text-right text-xs">
+                  <td
+                    className="num px-2 py-2.5 text-right text-xs"
+                    style={{ color: 'var(--color-fg)' }}
+                  >
                     {fmtCount(t.matched)}
                   </td>
                   <td
-                    className={`num px-2 py-2.5 text-right text-xs font-medium ${
-                      below ? 'text-exception' : 'text-matched'
-                    }`}
+                    className="num px-2 py-2.5 text-right text-xs font-semibold"
+                    style={{ color: below ? 'var(--color-exception)' : 'var(--color-matched)' }}
                   >
                     {fmtPct(t.match_rate_pct)}
                   </td>
@@ -72,28 +91,46 @@ export function TierPanel({ recon }: { recon: ReconMetrics }) {
                       target={[t.target_pct_low, t.target_pct_high]}
                       tone={below ? 'exception' : 'matched'}
                     />
-                    <div className="text-base-600 mt-1 font-mono text-[0.625rem]">
+                    <div
+                      className="mt-1 font-mono text-[0.625rem]"
+                      style={{ color: 'var(--color-fg-faint)' }}
+                    >
                       target {t.target_pct_low.toFixed(0)}–{t.target_pct_high.toFixed(0)}%
                     </div>
                   </td>
-                  <td className="text-base-400 py-2.5 pr-4 pl-2 text-xs italic">{t.proves}</td>
+                  <td
+                    className="py-2.5 pr-5 pl-2 text-xs italic"
+                    style={{ color: 'var(--color-fg-muted)' }}
+                  >
+                    {t.proves}
+                  </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
       </div>
-      <div className="hairline text-base-500 flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 text-xs">
+      <div
+        className="hairline flex flex-wrap gap-x-6 gap-y-1 px-5 py-3 text-xs"
+        style={{ color: 'var(--color-fg-subtle)' }}
+      >
         <span>
-          Overall <span className="num text-base-300">{fmtPct(recon.overall_match_rate_pct)}</span>
+          Overall{' '}
+          <span className="num font-medium" style={{ color: 'var(--color-fg)' }}>
+            {fmtPct(recon.overall_match_rate_pct)}
+          </span>
         </span>
         <span>
           Exception rate{' '}
-          <span className="num text-exception">{fmtPct(recon.exception_rate_pct)}</span>
+          <span className="num font-medium" style={{ color: 'var(--color-exception)' }}>
+            {fmtPct(recon.exception_rate_pct)}
+          </span>
         </span>
         <span>
           Residual explained{' '}
-          <span className="num text-base-300">{fmtPct(recon.residual_explained_pct)}</span>
+          <span className="num font-medium" style={{ color: 'var(--color-fg)' }}>
+            {fmtPct(recon.residual_explained_pct)}
+          </span>
         </span>
       </div>
     </Card>
