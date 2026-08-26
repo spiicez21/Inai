@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import polars as pl
 
 from inai import __version__
 from inai.config import RUNS_DIR, ResolvedConfig
@@ -43,12 +44,15 @@ from inai.eval.scorecard import (
 )
 from inai.money import pct
 from inai.schema import TIER_ORDER, Arm, ExceptionClass, MatchTier
-from inai.store.duckdb_store import Store
+from inai.sim.build import BuildResult, build
+from inai.store.duckdb_store import TRUTH_SCHEMA, Store
 
-PLACEHOLDER_BANNER = (
-    "PLACEHOLDER RUN — the matcher, classifier and recovery core are not implemented yet "
-    "(INAI_SPEC.md §11 phases 1-6). Every figure on this scorecard is synthesised from the "
-    "seed and means nothing."
+PROVENANCE_WARNING = (
+    "PARTIAL RUN — the data pipeline is real (phase 1): records, amounts, settlements and "
+    "difficulty tiers are generated from the Olist spine and corrupted by the 14 documented "
+    "operators. The matcher, classifier and recovery core are NOT implemented yet (phases "
+    "2-6), so every match rate, recovery figure and bridge metric below is synthesised from "
+    "the seed and means nothing."
 )
 
 #: What each tier actually proves. Verbatim from DATA.md §5.2 — including T0's.
@@ -92,7 +96,7 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
     # across stages makes output depend on stage ORDER, which breaks reproducibility
     # the moment anyone reorders anything.
     root_rng = np.random.default_rng(cfg.run.seed)
-    rng_recon, rng_recovery, rng_exceptions = root_rng.spawn(3)
+    rng_generate, rng_recon, rng_recovery, rng_exceptions = root_rng.spawn(4)
 
     store = Store(out / "run.duckdb")
     store.execute(
@@ -111,10 +115,16 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
         ],
     )
 
-    # ---- STAGES 1-3 GO HERE (phases 1-6) --------------------------------
-    recon, tier_counts = _placeholder_recon(cfg, rng_recon)
+    # ---- PHASE 1: real generation ---------------------------------------
+    built = build(cfg, rng_generate)
+    _persist_batch(store, run_id, built)
+
+    # ---- STAGES 1-3 GO HERE (phases 2-6) --------------------------------
+    # `eligible` per tier is now REAL — it comes from ground truth. `matched` is still
+    # fabricated, because there is no matcher yet. The banner says so.
+    recon = _placeholder_recon(cfg, rng_recon, built.tier_counts)
     recovery = _placeholder_recovery(cfg, rng_recovery)
-    exception_rows = _placeholder_exceptions(cfg, rng_exceptions, tier_counts)
+    exception_rows = _placeholder_exceptions(cfg, rng_exceptions, built.tier_counts)
     buckets = _bucket_exceptions(exception_rows, cfg.run.n_records)
     bridge = _placeholder_bridge(cfg, buckets, rng_recovery)
     blocks = _placeholder_policy_blocks(cfg, rng_recovery)
@@ -144,7 +154,8 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
         exceptions=buckets,
         unresolved_count=sum(b.count for b in buckets if b.cls is ExceptionClass.UNRESOLVED),
         policy_blocks=blocks,
-        limitations=[PLACEHOLDER_BANNER, *LIMITATIONS],
+        provenance_warning=PROVENANCE_WARNING,
+        limitations=list(LIMITATIONS),
     )
 
     artifacts = RunArtifacts(out)
@@ -201,16 +212,14 @@ def _hardware() -> str:
 # Placeholders — delete as phases 1-6 land.
 # ---------------------------------------------------------------------------
 def _placeholder_recon(
-    cfg: ResolvedConfig, rng: np.random.Generator
-) -> tuple[ReconMetrics, dict[MatchTier, int]]:
-    n = cfg.run.n_records
-    counts: dict[MatchTier, int] = {}
-    remaining = n
-    for tier in TIER_ORDER[:-1]:
-        c = round(n * TIER_SHARE[tier])
-        counts[tier] = c
-        remaining -= c
-    counts[MatchTier.T4_ADVERSARIAL] = max(remaining, 0)
+    cfg: ResolvedConfig, rng: np.random.Generator, tier_counts: dict[MatchTier, int]
+) -> ReconMetrics:
+    """Tier *populations* are real (from ground truth). Tier *match rates* are fabricated.
+
+    Delete the `rng.uniform` draws the moment the matcher lands in phase 2; the shape of
+    this function is already what the real one has to return.
+    """
+    n = sum(tier_counts.values()) or cfg.run.n_records
 
     tiers: list[TierResult] = []
     total_matched = 0
@@ -218,11 +227,11 @@ def _placeholder_recon(
     for tier in TIER_ORDER:
         lo, hi = TIER_TARGETS[tier]
         rate = (
-            float(rng.uniform(lo, hi))
-            if tier is not MatchTier.T4_ADVERSARIAL
-            else float(rng.uniform(28.0, 46.0))
+            float(rng.uniform(28.0, 46.0))
+            if tier is MatchTier.T4_ADVERSARIAL
+            else float(rng.uniform(lo, hi))
         )
-        eligible = counts[tier]
+        eligible = tier_counts.get(tier, 0)
         matched = round(eligible * rate / 100)
         total_matched += matched
         if tier in (MatchTier.T0_EXACT, MatchTier.T1_DETERMINISTIC, MatchTier.T2_FUZZY):
@@ -241,17 +250,14 @@ def _placeholder_recon(
 
     total_residual = int(rng.integers(400_000, 900_000)) * max(n // 1000, 1)
     attributed = int(total_residual * float(rng.uniform(0.86, 0.96)))
-    return (
-        ReconMetrics(
-            tiers=tiers,
-            auto_match_rate_pct=round(pct(auto_matched, n), 2),
-            overall_match_rate_pct=round(pct(total_matched, n), 2),
-            exception_rate_pct=round(pct(n - total_matched, n), 2),
-            residual_explained_pct=round(pct(attributed, total_residual), 2),
-            total_residual_paise=total_residual,
-            attributed_residual_paise=attributed,
-        ),
-        counts,
+    return ReconMetrics(
+        tiers=tiers,
+        auto_match_rate_pct=round(pct(auto_matched, n), 2),
+        overall_match_rate_pct=round(pct(total_matched, n), 2),
+        exception_rate_pct=round(pct(n - total_matched, n), 2),
+        residual_explained_pct=round(pct(attributed, total_residual), 2),
+        total_residual_paise=total_residual,
+        attributed_residual_paise=attributed,
     )
 
 
@@ -455,22 +461,131 @@ def _placeholder_policy_blocks(cfg: ResolvedConfig, rng: np.random.Generator) ->
 
 
 def _load_exceptions_to_store(store: Store, run_id: str, rows: list[dict[str, Any]]) -> None:
-    for r in rows:
-        store.execute(
-            "INSERT INTO exceptions (run_id, exception_id, cls, tier, ledger_ref, "
-            "settlement_refs, bank_refs, amount_paise, machine_reason, human_reason, "
-            "routed_action) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            [
-                run_id,
-                r["exception_id"],
-                r["cls"],
-                r["tier"],
-                r["ledger_ref"],
-                [r["settlement_ref"]],
-                [r["bank_ref"]],
-                r["amount_paise"],
-                r["machine_reason"],
-                r["human_reason"],
-                r["routed_action"],
-            ],
-        )
+    """Same Arrow path as `_persist_batch` — see the note there on why, not executemany."""
+    if not rows:
+        return
+    df = pl.DataFrame(
+        {
+            "run_id": [run_id] * len(rows),
+            "exception_id": [r["exception_id"] for r in rows],
+            "cls": [r["cls"] for r in rows],
+            "tier": [r["tier"] for r in rows],
+            "ledger_ref": [r["ledger_ref"] for r in rows],
+            "settlement_refs": [[r["settlement_ref"]] for r in rows],
+            "bank_refs": [[r["bank_ref"]] for r in rows],
+            "amount_paise": [int(r["amount_paise"]) for r in rows],
+            "machine_reason": [r["machine_reason"] for r in rows],
+            "human_reason": [r["human_reason"] for r in rows],
+            "routed_action": [r["routed_action"] for r in rows],
+        }
+    )
+    store.con.register("_load_exceptions", df)
+    store.con.execute("INSERT INTO exceptions SELECT * FROM _load_exceptions")
+    store.con.unregister("_load_exceptions")
+
+
+def _persist_batch(store: Store, run_id: str, built: BuildResult) -> None:
+    """Write the generated batch, and its ground truth, to their SEPARATE schemas.
+
+    `ground_truth.truth_links` is the only place the answers live. Nothing that makes a
+    decision may read it — enforced by ruff TID251 and tests/test_no_truth_leak.py.
+
+    Rows go in by registering an Arrow frame and running `INSERT … SELECT`, not by
+    `executemany`. That is not a micro-optimisation: parameterised executemany took 180
+    seconds for 15,000 rows here, which would have made the throughput slide — "5,000
+    records in seconds", the whole comparison against 15-25 manual hours a month — a lie.
+    """
+    batch = built.batch
+
+    def load(table: str, df: pl.DataFrame) -> None:
+        if df.height == 0:
+            return
+        view = f"_load_{table.replace('.', '_')}"
+        store.con.register(view, df)
+        store.con.execute(f"INSERT INTO {table} SELECT * FROM {view}")
+        store.con.unregister(view)
+
+    load(
+        "invoices",
+        pl.DataFrame(
+            {
+                "run_id": [run_id] * len(batch.chains),
+                "invoice_id": [c.invoice.invoice_id for c in batch.chains],
+                "customer_id": [c.invoice.customer_id for c in batch.chains],
+                "issued_at": [c.invoice.issued_at.replace(tzinfo=None) for c in batch.chains],
+                "due_at": [c.invoice.due_at.replace(tzinfo=None) for c in batch.chains],
+                "amount_paise": [int(c.invoice.amount_paise) for c in batch.chains],
+                "currency": [c.invoice.currency for c in batch.chains],
+                "order_id": [c.invoice.order_id for c in batch.chains],
+                "subscription_id": [c.invoice.subscription_id for c in batch.chains],
+                "status": [c.invoice.status.value for c in batch.chains],
+                "has_written_agreement": [c.invoice.has_written_agreement for c in batch.chains],
+            }
+        ),
+    )
+
+    legs = [leg for c in batch.chains for leg in c.legs]
+    load(
+        "settlement_legs",
+        pl.DataFrame(
+            {
+                "run_id": [run_id] * len(legs),
+                "entity_id": [x.entity_id for x in legs],
+                "type": [x.type.value for x in legs],
+                "debit": [int(x.debit) for x in legs],
+                "credit": [int(x.credit) for x in legs],
+                "amount": [int(x.amount) for x in legs],
+                "currency": [x.currency for x in legs],
+                "fee": [int(x.fee) for x in legs],
+                "tax": [int(x.tax) for x in legs],
+                "on_hold": [x.on_hold for x in legs],
+                "settled": [x.settled for x in legs],
+                "created_at": [x.created_at.replace(tzinfo=None) for x in legs],
+                "settled_at": [
+                    x.settled_at.replace(tzinfo=None) if x.settled_at else None for x in legs
+                ],
+                "settlement_id": [x.settlement_id for x in legs],
+                "settlement_utr": [x.settlement_utr for x in legs],
+                "order_id": [x.order_id for x in legs],
+                "order_receipt": [x.order_receipt for x in legs],
+                "method": [x.method.value for x in legs],
+                "card_network": [x.card_network for x in legs],
+                "card_issuer": [x.card_issuer for x in legs],
+                "card_type": [x.card_type for x in legs],
+                "dispute_id": [x.dispute_id for x in legs],
+            }
+        ),
+    )
+
+    load(
+        "bank_credits",
+        pl.DataFrame(
+            {
+                "run_id": [run_id] * len(batch.credits),
+                "statement_line_id": [c.statement_line_id for c in batch.credits],
+                "value_date": [c.value_date for c in batch.credits],
+                "amount_paise": [int(c.amount_paise) for c in batch.credits],
+                "narration": [c.narration for c in batch.credits],
+                "extracted_utr": [c.extracted_utr for c in batch.credits],
+                "counterparty_guess": [c.counterparty_guess for c in batch.credits],
+            }
+        ),
+    )
+
+    load(
+        f"{TRUTH_SCHEMA}.truth_links",
+        pl.DataFrame(
+            {
+                "run_id": [run_id] * len(built.truth),
+                "ledger_ref": [t.ledger_ref for t in built.truth],
+                "settlement_refs": [list(t.settlement_refs) for t in built.truth],
+                "bank_refs": [list(t.bank_refs) for t in built.truth],
+                "difficulty_tier": [t.difficulty_tier.value for t in built.truth],
+                "operators_fired": [list(t.operators_fired) for t in built.truth],
+                "latent_state": [t.latent_state.value for t in built.truth],
+                "recoverable_by_perfect_policy": [
+                    t.recoverable_by_perfect_policy for t in built.truth
+                ],
+            }
+        ),
+    )

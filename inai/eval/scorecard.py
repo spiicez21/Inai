@@ -134,6 +134,14 @@ class PolicyBlock(Frozen):
 
 
 class Scorecard(Frozen):
+    #: Set whenever any figure below is not yet produced by real code.
+    #:
+    #: A DEDICATED FIELD, not a specially-worded entry in `limitations`. It was a string
+    #: prefix once; renaming the banner text silently removed it from the dashboard while
+    #: the fabricated numbers stayed on screen. A warning that can be disabled by a typo is
+    #: not a warning.
+    provenance_warning: str | None = None
+
     meta: RunMeta
     recon: ReconMetrics
     recovery: RecoveryMetrics

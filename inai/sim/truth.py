@@ -42,6 +42,20 @@ class LatentState(StrEnum):
     #: ~15%. Won't recover this cycle by any means. Correct action is early write-off.
     HOPELESS = "hopeless"
 
+    @property
+    def recoverable(self) -> bool:
+        """Would a PERFECT policy recover this account this cycle?
+
+        The denominator of the oracle gap (DATA.md §5.3). `self_curing` counts because it
+        recovers regardless — which is exactly why counting it as a win inflates every
+        vendor benchmark.
+        """
+        return self in (
+            LatentState.SELF_CURING,
+            LatentState.PERSUADABLE,
+            LatentState.RETRY_ONLY,
+        )
+
 
 LATENT_STATE_PRIOR: dict[LatentState, float] = {
     LatentState.SELF_CURING: 0.35,

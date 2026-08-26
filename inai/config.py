@@ -76,6 +76,19 @@ class RunConfig(BaseModel):
     llm_mode: Literal["replay", "live", "off"] = "replay"
     tolerance_paise: int = 100  # ±₹1, INAI_SPEC.md §6.2 T1
 
+    # --- merchant profile: the target INR amount distribution (DATA.md §2.1) ------
+    #: Median ticket the Brazilian amounts are rescaled onto, rank-preserving.
+    median_ticket_inr: float = Field(default=2400.0, gt=0)
+    #: Lognormal spread. Higher = a longer tail of large tickets.
+    amount_sigma: float = Field(default=1.05, gt=0)
+    #: Operating window the spine's two-year span is compressed into. A merchant
+    #: reconciling a quarter of trading is the scenario; two years in one batch is not,
+    #: and it would stop settlements from lumping (DATA.md §1.3).
+    window_days: int = Field(default=90, gt=0)
+    #: Oversampling factor for repeat customers. Olist is consumer e-commerce; INAI targets
+    #: merchants with recurring and B2B receivables. Deliberate deviation — see sim/spine.py.
+    repeat_boost: float = Field(default=6.0, ge=1.0)
+
     @classmethod
     def load(cls, path: str | Path) -> RunConfig:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))

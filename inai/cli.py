@@ -124,9 +124,10 @@ def version() -> None:
 
 def _print_scorecard(sc: dict[str, Any]) -> None:
     meta = sc["meta"]
-    for note in sc.get("limitations", []):
-        if note.startswith("PLACEHOLDER RUN"):
-            console.print(f"[bold black on yellow] {note} [/]\n")
+    # A dedicated field, not a magic prefix in `limitations`. See Scorecard.provenance_warning.
+    warning = sc.get("provenance_warning")
+    if warning:
+        console.print(f"[bold black on yellow] {warning} [/]\n")
 
     head = Table(box=None, show_header=False)
     head.add_row("[bold]run_id[/bold]", meta["run_id"])
