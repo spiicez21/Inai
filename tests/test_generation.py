@@ -112,20 +112,37 @@ def test_upi_carries_zero_mdr(result: BuildResult) -> None:
 # ---------------------------------------------------------------------------
 # Ground truth — DATA.md §5.2
 # ---------------------------------------------------------------------------
-def test_tier_is_the_hardest_operator_that_fired(result: BuildResult) -> None:
-    by_id = {op.id: op.tier_contribution for op in RECORD_OPERATORS}
-    by_id |= {op.id: op.tier_contribution for op in BATCH_OPERATORS}
+def test_tier_is_the_hardest_ESCALATING_operator_that_fired(result: BuildResult) -> None:
+    """Hardest tier among the operators that fired AND that make the invoice harder to match.
+
+    C09 (duplicate credit) fires on the batch but leaves the original credit untouched, so
+    the invoice matches exactly as before — the duplicate is a standalone finding. Counting
+    it as an adversarial difficulty filled T4 with easy records and flattered the one number
+    we promised to report honestly.
+    """
+    escalating = {op.id: op.tier_contribution for op in RECORD_OPERATORS}
+    escalating |= {op.id: op.tier_contribution for op in BATCH_OPERATORS if op.escalates_tier}
     order = list(MatchTier)
 
     for link in result.truth:
-        if not link.operators_fired:
-            assert link.difficulty_tier is MatchTier.T0_EXACT
+        relevant = [op for op in link.operators_fired if op in escalating]
+        if not relevant:
+            assert link.difficulty_tier is MatchTier.T0_EXACT, (
+                f"{link.ledger_ref}: no escalating operator fired but tier is "
+                f"{link.difficulty_tier}"
+            )
             continue
-        hardest = max(order.index(by_id[op]) for op in link.operators_fired)
+        hardest = max(order.index(escalating[op]) for op in relevant)
         assert order.index(link.difficulty_tier) == hardest, (
             f"{link.ledger_ref}: tier {link.difficulty_tier} does not match "
             f"operators {link.operators_fired}"
         )
+
+
+def test_non_escalating_operators_still_get_recorded(result: BuildResult) -> None:
+    """Not escalating the tier must not mean losing the provenance."""
+    fired = {op for link in result.truth for op in link.operators_fired}
+    assert "C09" in fired
 
 
 def test_every_chain_has_exactly_one_truth_row(result: BuildResult) -> None:
@@ -138,14 +155,19 @@ def test_all_fourteen_operators_are_registered() -> None:
     assert set(ALL_OPERATOR_IDS) == {f"C{i:02d}" for i in range(1, 15)}
 
 
-def test_every_operator_actually_fires(result: BuildResult) -> None:
+def test_every_operator_actually_fires() -> None:
     """A registered operator that never fires is dead weight pretending to be coverage.
 
-    C02 in particular is the canary: it needs a customer holding several invoices, which
-    only exists because the spine is sampled customer-first.
+    Run against `adversarial.yaml`, which exists precisely to exercise the hard set: the
+    rare operators (C08 at 2%, on 18% of records) fire well under once in a 200-record
+    smoke batch, so checking coverage there would pass or fail on luck.
+
+    C02 is the canary — it needs one customer holding two DIRECT invoices, which only
+    exists because the spine is sampled customer-first and the channel is chosen per
+    customer rather than per invoice.
     """
-    fired = set(result.operator_counts)
-    missing = set(ALL_OPERATOR_IDS) - fired
+    res = _build(config="configs/adversarial.yaml")
+    missing = set(ALL_OPERATOR_IDS) - set(res.operator_counts)
     assert not missing, f"operators registered but never fired: {sorted(missing)}"
 
 
@@ -198,3 +220,88 @@ def test_demo_config_produces_five_thousand_records() -> None:
     res = _build(config="configs/demo.yaml")
     assert len(res.batch.chains) >= 4_900, f"only {len(res.batch.chains)} chains"
     assert len(res.truth) == len(res.batch.chains)
+
+
+# ---------------------------------------------------------------------------
+# The two payment channels
+# ---------------------------------------------------------------------------
+def test_both_channels_are_present(result: BuildResult) -> None:
+    """A real merchant has both: gateway checkouts settle as lumped credits, B2B customers
+    pay by NEFT/IMPS from their own account."""
+    channels = {c.channel for c in result.batch.chains}
+    assert channels == {"gateway", "direct"}
+
+
+def test_direct_payments_have_no_settlement_legs(result: BuildResult) -> None:
+    """No gateway means no legs, no MDR and no GST — it is a two-way reconciliation."""
+    for chain in result.batch.chains:
+        if chain.channel == "direct":
+            assert chain.legs == []
+            assert chain.settlement_id is None
+
+
+def test_direct_credits_are_not_lumped_by_construction(result: BuildResult) -> None:
+    """A customer's own transfer arrives as its own statement line.
+
+    Scoped to chains C02 did not touch, because bundling several invoices into one transfer
+    is exactly what C02 models — sharing a line there is the corruption working, not a bug.
+    """
+    direct = [
+        c for c in result.batch.chains if c.channel == "direct" and "C02" not in c.operators_fired
+    ]
+    refs = [c.bank_ref for c in direct if c.bank_ref]
+    assert len(refs) == len(set(refs)), "two unbundled direct payments share a bank line"
+
+
+def test_bundled_invoices_do_share_a_credit(result: BuildResult) -> None:
+    """The other half of the same rule: when C02 fires, the invoices MUST share a line."""
+    bundled = [c for c in result.batch.chains if "C02" in c.operators_fired]
+    if not bundled:
+        pytest.skip("C02 did not fire in this config")
+    refs = [c.bank_ref for c in bundled if c.bank_ref]
+    assert len(set(refs)) < len(refs), "C02 fired but produced no shared credit"
+
+
+def test_direct_narrations_name_the_customer_not_razorpay(result: BuildResult) -> None:
+    """This is the whole point of the channel: on a direct transfer the remitter is the
+    CUSTOMER, so payer identity becomes a real matching signal and a wrong payer becomes a
+    real anomaly."""
+    by_ref = {c.statement_line_id: c for c in result.batch.credits}
+    checked = 0
+    for chain in result.batch.chains:
+        if chain.channel != "direct" or not chain.bank_ref:
+            continue
+        # Skip the ones we deliberately damaged.
+        if {"C08", "C07", "C14"} & set(chain.operators_fired):
+            continue
+        credit = by_ref.get(chain.bank_ref)
+        if credit is None:
+            continue
+        assert "RAZORPAY" not in credit.narration.upper()
+        checked += 1
+    assert checked > 0
+
+
+def test_payer_name_is_stable_per_customer(result: BuildResult) -> None:
+    """One customer always presents the same remitter string, or payer identity carries no
+    information at all."""
+    names: dict[str, set[str]] = {}
+    for chain in result.batch.chains:
+        names.setdefault(chain.invoice.customer_id, set()).add(chain.invoice.customer_name)
+    assert all(len(v) == 1 for v in names.values())
+
+
+def test_adversarial_operators_only_touch_direct_payments(result: BuildResult) -> None:
+    """C08 and C10 are CUSTOMER-side failures.
+
+    A gateway settlement is always remitted by Razorpay, so "paid from the parent company's
+    account" cannot happen to one, and a customer deducting from what they owe is not the
+    same event as the gateway settling short.
+    """
+    channel_of = {c.invoice.invoice_id: c.channel for c in result.batch.chains}
+    for link in result.truth:
+        for op in ("C08", "C10"):
+            if op in link.operators_fired:
+                assert channel_of[link.ledger_ref] == "direct", (
+                    f"{op} fired on a gateway record {link.ledger_ref}"
+                )
