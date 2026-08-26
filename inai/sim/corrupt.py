@@ -35,6 +35,17 @@ from inai.sim.chain import Batch, LedgerChain
 class RecordOperator(Protocol):
     id: str
     tier_contribution: MatchTier
+    #: True for operators that REWRITE the shared bank credit's narration.
+    #:
+    #: A settlement's credit is shared by every order in that cycle — about 57 of them at
+    #: demo scale. An operator applied per-chain therefore fires ~57 times on the same
+    #: string, so a nominal 12% rate becomes an effective ~100%, and repeated truncation
+    #: and case-scrambling shredded 56% of UTRs beyond recovery.
+    #:
+    #: Amount-shifting operators are deliberately NOT flagged: several orders in one
+    #: settlement each having a fee variance or a dropped refund is real, and their effects
+    #: genuinely accumulate on the credit. Rewriting one string 57 times is not real.
+    once_per_credit: bool
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool: ...
     def apply(self, chain: LedgerChain, batch: Batch, rng: np.random.Generator) -> None: ...
@@ -83,14 +94,20 @@ class C01_StripReference:
     """
 
     id = "C01"
+    once_per_credit = False
     tier_contribution = MatchTier.T2_FUZZY
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
         return any(leg.order_receipt is not None for leg in chain.legs)
 
     def apply(self, chain: LedgerChain, batch: Batch, rng: np.random.Generator) -> None:
+        # BOTH references, not just the receipt. `order_receipt` is the merchant's own
+        # number and `order_id` is the gateway's; a payment message that arrives with no
+        # invoice reference has neither. Clearing only one leaves a perfect join key in
+        # place, so the operator claims to make matching hard while changing nothing —
+        # which showed up as T4 scoring 95% against a "<50% expected" target.
         for leg in list(chain.legs):
-            _swap_leg(chain, batch, leg, dc_replace_leg(leg, order_receipt=None))
+            _swap_leg(chain, batch, leg, dc_replace_leg(leg, order_receipt=None, order_id=None))
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +121,7 @@ class C03_SplitPayment:
     """
 
     id = "C03"
+    once_per_credit = False
     tier_contribution = MatchTier.T3_STRUCTURAL
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -131,6 +149,7 @@ class C04_TimingShift:
     """
 
     id = "C04"
+    once_per_credit = False
     tier_contribution = MatchTier.T1_DETERMINISTIC
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -155,6 +174,7 @@ class C05_FeeVariance:
     """
 
     id = "C05"
+    once_per_credit = False
     tier_contribution = MatchTier.T1_DETERMINISTIC
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -184,6 +204,7 @@ class C06_MissingRefundReversal:
     """
 
     id = "C06"
+    once_per_credit = False
     tier_contribution = MatchTier.T1_DETERMINISTIC
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -224,6 +245,7 @@ class C07_MangleNarration:
     """Bank field limits, OCR, abbreviation. DATA.md §4.1 names this the weakest link."""
 
     id = "C07"
+    once_per_credit = True
     tier_contribution = MatchTier.T2_FUZZY
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -256,6 +278,7 @@ class C08_ParentCompanyPayer:
     """
 
     id = "C08"
+    once_per_credit = True
     tier_contribution = MatchTier.T4_ADVERSARIAL
 
     _PARENTS = (
@@ -292,6 +315,7 @@ class C10_UnexplainedDeduction:
     """
 
     id = "C10"
+    once_per_credit = False
     tier_contribution = MatchTier.T4_ADVERSARIAL
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -309,6 +333,7 @@ class C11_UnsettledCapture:
     """Payment captured, settlement never formed. Money owed, sitting at the gateway."""
 
     id = "C11"
+    once_per_credit = False
     tier_contribution = MatchTier.T1_DETERMINISTIC
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -327,6 +352,7 @@ class C12_DisputeHold:
     """Dispute raised, funds withheld. Chasing this payer would be illegal, not merely rude."""
 
     id = "C12"
+    once_per_credit = False
     tier_contribution = MatchTier.T1_DETERMINISTIC
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -372,6 +398,7 @@ class C13_CancelPostCapture:
     """
 
     id = "C13"
+    once_per_credit = False
     tier_contribution = MatchTier.T3_STRUCTURAL
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -388,6 +415,7 @@ class C14_MixedCasing:
     """Real Indian bank statements, in the wild."""
 
     id = "C14"
+    once_per_credit = True
     tier_contribution = MatchTier.T2_FUZZY
 
     def applies_to(self, chain: LedgerChain, rng: np.random.Generator) -> bool:
@@ -419,6 +447,7 @@ class C02_BundleInvoices:
     """
 
     id = "C02"
+    once_per_credit = False
     tier_contribution = MatchTier.T3_STRUCTURAL
 
     def apply_batch(self, batch: Batch, rate: float, rng: np.random.Generator) -> None:
@@ -460,6 +489,7 @@ class C09_DuplicateCredit:
     """
 
     id = "C09"
+    once_per_credit = False
     tier_contribution = MatchTier.T4_ADVERSARIAL
 
     def apply_batch(self, batch: Batch, rate: float, rng: np.random.Generator) -> None:
@@ -526,10 +556,15 @@ def corrupt(batch: Batch, rates: dict[str, float], rng: np.random.Generator) -> 
         if rate <= 0:
             continue
         op_rng = streams[op.id]
+        touched_credits: set[str] = set()
         for chain in batch.chains:
+            if op.once_per_credit and chain.bank_ref in touched_credits:
+                continue
             if op_rng.random() < rate and op.applies_to(chain, op_rng):
                 op.apply(chain, batch, op_rng)
                 chain.with_operator(op.id, op.tier_contribution)
+                if op.once_per_credit and chain.bank_ref is not None:
+                    touched_credits.add(chain.bank_ref)
 
     for bop in BATCH_OPERATORS:
         rate = float(rates.get(bop.id, 0.0))

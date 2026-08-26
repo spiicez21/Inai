@@ -64,7 +64,7 @@ select = [
 # RUF002/RUF003: these docstrings quote the settlement arithmetic with a real minus sign
 # (U+2212) and use en dashes in ranges. That is correct typography in prose, and ruff's
 # confusable-character check is aimed at identifiers and code, not at documentation.
-ignore = ["E501", "RUF002", "RUF003"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 
 # THE TRUTH-LEAK GUARD (INAI_SPEC.md §0.6, DATA.md §5.3).
 # Enforced in-editor and in CI, before any test runs.

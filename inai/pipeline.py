@@ -30,29 +30,31 @@ import polars as pl
 from inai import __version__
 from inai.config import RUNS_DIR, ResolvedConfig
 from inai.eval.report import RunArtifacts
+from inai.eval.score_match import score
 from inai.eval.scorecard import (
     ArmResult,
     BridgeMetrics,
     ConfidenceInterval,
     ExceptionBucket,
     PolicyBlock,
-    ReconMetrics,
     RecoveryMetrics,
     RunMeta,
     Scorecard,
-    TierResult,
 )
+from inai.match.cascade import match
+from inai.match.types import ReconInput, ReconOutput
 from inai.money import pct
 from inai.schema import TIER_ORDER, Arm, ExceptionClass, MatchTier
 from inai.sim.build import BuildResult, build
 from inai.store.duckdb_store import TRUTH_SCHEMA, Store
 
 PROVENANCE_WARNING = (
-    "PARTIAL RUN — the data pipeline is real (phase 1): records, amounts, settlements and "
-    "difficulty tiers are generated from the Olist spine and corrupted by the 14 documented "
-    "operators. The matcher, classifier and recovery core are NOT implemented yet (phases "
-    "2-6), so every match rate, recovery figure and bridge metric below is synthesised from "
-    "the seed and means nothing."
+    "PARTIAL RUN — reconciliation is real (phases 1-2): the records, the gross→net "
+    "settlement math, the T0/T1 match rates and the residual attribution are all produced "
+    "by working code and scored against ground truth. The T2/T3/T4 tiers, the exception "
+    "classifier and the whole recovery core are NOT implemented yet (phases 3-6), so every "
+    "recovery figure, bridge metric and policy block below is synthesised from the seed and "
+    "means nothing."
 )
 
 #: What each tier actually proves. Verbatim from DATA.md §5.2 — including T0's.
@@ -96,7 +98,7 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
     # across stages makes output depend on stage ORDER, which breaks reproducibility
     # the moment anyone reorders anything.
     root_rng = np.random.default_rng(cfg.run.seed)
-    rng_generate, rng_recon, rng_recovery, rng_exceptions = root_rng.spawn(4)
+    rng_generate, _rng_reserved, rng_recovery, rng_exceptions = root_rng.spawn(4)
 
     store = Store(out / "run.duckdb")
     store.execute(
@@ -119,10 +121,17 @@ def run(config_path: str | Path, seed: int | None = None, runs_dir: Path = RUNS_
     built = build(cfg, rng_generate)
     _persist_batch(store, run_id, built)
 
-    # ---- STAGES 1-3 GO HERE (phases 2-6) --------------------------------
-    # `eligible` per tier is now REAL — it comes from ground truth. `matched` is still
-    # fabricated, because there is no matcher yet. The banner says so.
-    recon = _placeholder_recon(cfg, rng_recon, built.tier_counts)
+    # ---- PHASE 2: real settlement math + T0/T1 cascade -------------------
+    recon_input = ReconInput(
+        invoices=[c.invoice for c in built.batch.chains],
+        legs=[leg for c in built.batch.chains for leg in c.legs],
+        credits=list(built.batch.credits),
+    )
+    matched = match(recon_input, tolerance_paise=cfg.run.tolerance_paise)
+    recon = score(matched, built.truth)
+    _persist_matches(store, run_id, matched)
+
+    # ---- STAGES 2-3 CONTINUE HERE (phases 3-6) --------------------------
     recovery = _placeholder_recovery(cfg, rng_recovery)
     exception_rows = _placeholder_exceptions(cfg, rng_exceptions, built.tier_counts)
     buckets = _bucket_exceptions(exception_rows, cfg.run.n_records)
@@ -211,56 +220,6 @@ def _hardware() -> str:
 # ---------------------------------------------------------------------------
 # Placeholders — delete as phases 1-6 land.
 # ---------------------------------------------------------------------------
-def _placeholder_recon(
-    cfg: ResolvedConfig, rng: np.random.Generator, tier_counts: dict[MatchTier, int]
-) -> ReconMetrics:
-    """Tier *populations* are real (from ground truth). Tier *match rates* are fabricated.
-
-    Delete the `rng.uniform` draws the moment the matcher lands in phase 2; the shape of
-    this function is already what the real one has to return.
-    """
-    n = sum(tier_counts.values()) or cfg.run.n_records
-
-    tiers: list[TierResult] = []
-    total_matched = 0
-    auto_matched = 0
-    for tier in TIER_ORDER:
-        lo, hi = TIER_TARGETS[tier]
-        rate = (
-            float(rng.uniform(28.0, 46.0))
-            if tier is MatchTier.T4_ADVERSARIAL
-            else float(rng.uniform(lo, hi))
-        )
-        eligible = tier_counts.get(tier, 0)
-        matched = round(eligible * rate / 100)
-        total_matched += matched
-        if tier in (MatchTier.T0_EXACT, MatchTier.T1_DETERMINISTIC, MatchTier.T2_FUZZY):
-            auto_matched += matched
-        tiers.append(
-            TierResult(
-                tier=tier,
-                eligible=eligible,
-                matched=matched,
-                match_rate_pct=round(pct(matched, eligible), 2),
-                target_pct_low=lo,
-                target_pct_high=hi,
-                proves=TIER_PROVES[tier],
-            )
-        )
-
-    total_residual = int(rng.integers(400_000, 900_000)) * max(n // 1000, 1)
-    attributed = int(total_residual * float(rng.uniform(0.86, 0.96)))
-    return ReconMetrics(
-        tiers=tiers,
-        auto_match_rate_pct=round(pct(auto_matched, n), 2),
-        overall_match_rate_pct=round(pct(total_matched, n), 2),
-        exception_rate_pct=round(pct(n - total_matched, n), 2),
-        residual_explained_pct=round(pct(attributed, total_residual), 2),
-        total_residual_paise=total_residual,
-        attributed_residual_paise=attributed,
-    )
-
-
 def _placeholder_recovery(cfg: ResolvedConfig, rng: np.random.Generator) -> RecoveryMetrics:
     n = cfg.run.n_records
     split = cfg.run.arms
@@ -589,3 +548,25 @@ def _persist_batch(store: Store, run_id: str, built: BuildResult) -> None:
             }
         ),
     )
+
+
+def _persist_matches(store: Store, run_id: str, output: ReconOutput) -> None:
+    """Match results into the store. Same Arrow path as `_persist_batch`."""
+    if not output.matches:
+        return
+    df = pl.DataFrame(
+        {
+            "run_id": [run_id] * len(output.matches),
+            "ledger_ref": [m.ledger_ref for m in output.matches],
+            "settlement_refs": [list(m.settlement_refs) for m in output.matches],
+            "bank_refs": [list(m.bank_refs) for m in output.matches],
+            "tier": [m.tier.value for m in output.matches],
+            "confidence": [float(m.confidence) for m in output.matches],
+            "residual_paise": [int(m.residual_paise) for m in output.matches],
+            "explanation": [m.explanation for m in output.matches],
+            "matched": [m.matched for m in output.matches],
+        }
+    )
+    store.con.register("_load_matches", df)
+    store.con.execute("INSERT INTO match_results SELECT * FROM _load_matches")
+    store.con.unregister("_load_matches")
