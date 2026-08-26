@@ -1,0 +1,109 @@
+[project]
+name = "inai"
+version = "0.1.0"
+description = "Reconciliation-first revenue recovery. Match first. Then chase."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "polars>=1.20",
+    "duckdb>=1.1",
+    "pyarrow>=18",
+    "rapidfuzz>=3.11",
+    "numpy>=2.2",
+    "typer>=0.15",
+    "rich>=13.9",
+    "pyyaml>=6.0",
+    "anthropic>=0.45",
+]
+
+[project.scripts]
+inai = "inai.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.123",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "types-pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["inai"]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+# ruff formats Python blocks inside markdown. Docs/*.md is the specification —
+# it is prose, not code, and its snippets are illustrative. Hands off.
+extend-exclude = ["Docs", "runs", "data"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "SIM",       # simplify
+    "TID",       # tidy-imports  <- truth-leak ban lives here
+    "RUF",
+    "NPY",       # numpy legacy-random ban (NPY002) => determinism
+]
+ignore = ["E501"]
+
+# THE TRUTH-LEAK GUARD (INAI_SPEC.md §0.6, DATA.md §5.3).
+# Enforced in-editor and in CI, before any test runs.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"inai.sim.truth".msg = "Ground truth must never reach match/, core/ or classify. See DATA.md 5.3."
+"inai.sim.truth.GroundTruth".msg = "Ground truth must never reach match/, core/ or classify."
+
+[tool.ruff.lint.per-file-ignores]
+# Only the simulator itself and the evaluator may see the answers.
+"inai/sim/*" = ["TID251"]
+"inai/eval/*" = ["TID251"]
+"tests/*" = ["TID251"]
+# `typer.Option(...)` in a default IS the typer API. B008 is a false positive here.
+"inai/cli.py" = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["inai"]
+
+# ---------------------------------------------------------------------------
+# Mypy — strict only where correctness is load-bearing
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["inai.match.*", "inai.core.*", "inai.classify", "inai.schema", "inai.money"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["duckdb.*", "polars.*", "rapidfuzz.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: excluded from the fast CI lane",
+]

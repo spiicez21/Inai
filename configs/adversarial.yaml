@@ -1,0 +1,13 @@
+name: adversarial
+n_records: 1000
+seed: 42
+description: "The named hard set. C08-C10 raised sharply — parent-co payer, unexplained
+  deduction, duplicate credit. T4 is expected to score under 50%. Report it anyway."
+llm_mode: replay
+
+corruption:
+  C08: 0.22   # pay from parent-company account   -> T4
+  C09: 0.14   # duplicate a credit                -> T4
+  C10: 0.20   # unexplained deduction             -> T4
+  C02: 0.12   # bundle N invoices into one credit -> T3
+  C07: 0.20   # mangle / truncate narration       -> T2
