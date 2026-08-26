@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      # The truth-leak guard runs FIRST. Everything downstream is meaningless if a module
+      # that makes a decision can see the answers. DATA.md §5.3.
+      - name: Ground-truth quarantine (ruff TID251)
+        run: uv run ruff check . --select TID251
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types (match/, core/, schema, money — strict)
+        run: uv run mypy inai
+
+      - name: Tests
+        run: uv run pytest -q
+
+      # Acceptance criterion, INAI_SPEC.md §11 phase 0.
+      - name: Smoke run end-to-end
+        run: uv run inai run --config configs/smoke.yaml --seed 42
+
+      - name: Determinism — same seed, same scorecard
+        run: uv run pytest tests/test_determinism.py -q
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run build
